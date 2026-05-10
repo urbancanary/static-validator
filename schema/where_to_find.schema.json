@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/where_to_find.schema.json",
+  "title": "WhereToFind",
+  "description": "Per-field hints telling a client where to source a value they don't have. Maps a schema field name to one or more sources.",
+  "type": "object",
+  "patternProperties": {
+    "^(coupon|day_count|frequency|maturity_date|issue_date|first_coupon_date|calendar|business_day_convention)$": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "source_reference.schema.json"}
+    }
+  },
+  "additionalProperties": false
+}

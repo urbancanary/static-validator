@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/validate_response.schema.json",
+  "title": "ValidateResponse",
+  "description": "Response body for POST /validate. Carries the canonical PublishedRecord plus a per-tier comparison of the client's hashes against canonical, plus targeted where-to-find hints for the fields the client is missing or that mismatched.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "record": {
+      "$ref": "published_record.schema.json",
+      "description": "The canonical published record for this ISIN, identical to what GET /hash/{isin} returns."
+    },
+    "validation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "match": {
+          "type": "boolean",
+          "description": "True iff the client's hashes agree with canonical at the highest tier the client sent. False if any sent tier diverges."
+        },
+        "highest_tier_compared": {
+          "type": ["string", "null"],
+          "enum": ["calc_hash_min", "calc_hash_std", "calc_hash_full", null],
+          "description": "Highest tier present in BOTH client and canonical. null if no overlap."
+        },
+        "tier_results": {
+          "type": "object",
+          "patternProperties": {
+            "^calc_hash_(min|std|full)$": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "match": {
+                  "type": ["boolean", "null"],
+                  "description": "true = hashes agree, false = hashes diverge, null = not compared (client did not send this tier)."
+                },
+                "reason": {
+                  "type": "string",
+                  "description": "Human-readable explanation when match is null or false."
+                }
+              },
+              "required": ["match"]
+            }
+          }
+        },
+        "missing_for_higher_tiers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"},
+          "description": "Fields the client did not present that would have allowed a higher-tier comparison."
+        },
+        "mismatched_at_tier": {
+          "type": ["string", "null"],
+          "enum": ["calc_hash_min", "calc_hash_std", "calc_hash_full", null],
+          "description": "Lowest tier at which client and canonical hashes diverged, if any."
+        },
+        "fields_implicated_by_mismatch": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"},
+          "description": "Fields introduced at the mismatching tier (the candidates for what is wrong on the client's side)."
+        },
+        "where_to_find": {
+          "$ref": "where_to_find.schema.json",
+          "description": "Targeted where-to-find hints for fields in missing_for_higher_tiers and fields_implicated_by_mismatch."
+        },
+        "warnings": {
+          "type": "array",
+          "items": {"type": "string"},
+          "description": "Human-readable warnings derived from structural_flags (e.g. 'bond is a sinker — your engine must apply the sinker schedule')."
+        }
+      },
+      "required": ["match", "tier_results", "missing_for_higher_tiers", "warnings"]
+    }
+  },
+  "required": ["record", "validation"]
+}

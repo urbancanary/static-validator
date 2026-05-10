@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/source_reference.schema.json",
+  "title": "SourceReference",
+  "description": "A single citation pointing at a public source.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Stable identifier for the source (e.g. 'EDGAR-424B5-0001193125-20-252589')."
+    },
+    "kind": {
+      "type": "string",
+      "enum": ["prospectus", "supplement", "etf_holding", "exchange_filing", "issuer_disclosure", "vendor_consensus", "other"],
+      "description": "What category of source this is. Drives how clients render or weight it."
+    },
+    "url": {
+      "type": "string",
+      "format": "uri",
+      "description": "Public URL where the source can be retrieved."
+    },
+    "page": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Optional page number within the source document."
+    },
+    "asof": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the source was retrieved or issued."
+    },
+    "note": {
+      "type": "string",
+      "description": "Free-text annotation (e.g. excerpt, section reference)."
+    }
+  },
+  "required": ["id", "kind"]
+}

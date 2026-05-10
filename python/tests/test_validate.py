@@ -103,3 +103,36 @@ class TestStructuralFlags:
         result = validate_bond_static(PANAMA, published)
         assert any("callable" in w for w in result.warnings)
         assert any("yield-to-worst" in w for w in result.warnings)
+
+
+class TestPublishedRecordPropagation:
+    """Confirm sources, confidence, where_to_find, and canonical_field_status
+    flow through validate_bond_static into the result, so frontends (Claude
+    Desktop MCP and Athena UI) get everything they need to render diagnostics.
+    """
+
+    def setup_method(self):
+        self.published = json.loads((GOLDEN / "panama_2060.expected.json").read_text())
+
+    def test_sources_propagate(self):
+        result = validate_bond_static(PANAMA, self.published)
+        assert len(result.sources) == 1
+        assert result.sources[0]["kind"] == "prospectus"
+        assert "EDGAR" in result.sources[0]["id"]
+
+    def test_confidence_propagates(self):
+        result = validate_bond_static(PANAMA, self.published)
+        assert result.confidence == "high"
+
+    def test_canonical_field_status_propagates(self):
+        result = validate_bond_static(PANAMA, self.published)
+        assert result.canonical_field_status["coupon"] == "explicit"
+        assert result.canonical_field_status["calendar"] == "default"
+
+    def test_where_to_find_propagates_for_default_fields(self):
+        result = validate_bond_static(PANAMA, self.published)
+        # The PANAMA record uses default for calendar/BDC; where_to_find
+        # gives clients a pointer for both.
+        assert "calendar" in result.where_to_find
+        assert "business_day_convention" in result.where_to_find
+        assert result.where_to_find["calendar"][0]["kind"] == "prospectus"

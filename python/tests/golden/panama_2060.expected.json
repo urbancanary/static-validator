@@ -1,7 +1,6 @@
 {
-  "_comment": "Locked tier hashes for PANAMA 3.87% 07/23/2060 (US698299BL70). Source: SEC EDGAR 424B5 0001193125-20-252589, BOND_BASIS_30_360 confirmed. Reference: codebase-mcp memory id 260. Sinker: amortizes in 3 equal tranches on 2058-07-23, 2059-07-23, 2060-07-23 — flagged via structural_flags.is_sinker so consumers know to apply the schedule downstream. Any change to the hash values requires a SCHEMA.md MAJOR version bump.",
-  "schema_version": "0.1",
   "isin": "US698299BL70",
+  "schema_version": "0.1",
   "asof": "2026-05-10",
   "tier_hashes": {
     "calc_hash_min": "sha256:2b9389300848bfa36e85b8e07ad6b2983b8861bee699448e82bd2f966e2adee1",
@@ -20,6 +19,42 @@
     "has_make_whole": false,
     "is_zero_coupon": false
   },
+  "canonical_field_status": {
+    "coupon": "explicit",
+    "day_count": "explicit",
+    "frequency": "explicit",
+    "maturity_date": "explicit",
+    "issue_date": "explicit",
+    "first_coupon_date": "explicit",
+    "calendar": "default",
+    "business_day_convention": "default"
+  },
   "confidence": "high",
-  "sources": ["EDGAR-424B5-0001193125-20-252589"]
+  "sources": [
+    {
+      "id": "EDGAR-424B5-0001193125-20-252589",
+      "kind": "prospectus",
+      "url": "https://www.sec.gov/Archives/edgar/data/76027/000119312520252589/d83953d424b5.htm",
+      "asof": "2020-09-24",
+      "note": "PANAMA 3.87% 07/23/2060; SEC 424B5 filing. Day-count BOND_BASIS_30_360 confirmed by issuer language: 'computed on the basis of a 360-day year, consisting of twelve 30-day months'. Sinker schedule: amortizes in 3 equal tranches on 2058-07-23, 2059-07-23, 2060-07-23."
+    }
+  ],
+  "where_to_find": {
+    "calendar": [
+      {
+        "id": "issuer-prospectus",
+        "kind": "prospectus",
+        "url": "https://www.sec.gov/Archives/edgar/data/76027/000119312520252589/d83953d424b5.htm",
+        "note": "Canonical record uses NULL_CALENDAR default; for OAS calculations, source the actual settlement calendar from the prospectus business-day section."
+      }
+    ],
+    "business_day_convention": [
+      {
+        "id": "issuer-prospectus",
+        "kind": "prospectus",
+        "url": "https://www.sec.gov/Archives/edgar/data/76027/000119312520252589/d83953d424b5.htm",
+        "note": "Canonical record uses UNADJUSTED default; for settlement-date computations, source the BDC from the prospectus."
+      }
+    ]
+  }
 }

@@ -29,6 +29,10 @@ class ValidationResult:
     canonical_hashes: dict[TierName, str]
     structural_flags: dict[str, bool] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+    where_to_find: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    sources: list[dict[str, Any]] = field(default_factory=list)
+    confidence: str | None = None
+    canonical_field_status: dict[str, str] = field(default_factory=dict)
     note: str = ""
 
 
@@ -75,7 +79,7 @@ def validate_bond_static(
     introduced at that tier. Surfaces structural flags from the published
     record so callers know when special downstream handling is needed.
     """
-    canonical_hashes, structural_flags = _unpack_published(published)
+    canonical_hashes, structural_flags, extras = _unpack_published(published)
 
     normalized = canonicalize_record(record)
     derived = apply_derivations(normalized)
@@ -90,8 +94,8 @@ def validate_bond_static(
     common_tiers = [t for t in ALL_TIERS if t in client_hashes and t in canonical_hashes]
     warnings = _warnings_for_flags(structural_flags)
 
-    if not common_tiers:
-        return ValidationResult(
+    def _result(**overrides: Any) -> ValidationResult:
+        base = dict(
             isin=normalized["isin"],
             match=False,
             tier_used=None,
@@ -100,21 +104,20 @@ def validate_bond_static(
             canonical_hashes=canonical_hashes,
             structural_flags=structural_flags,
             warnings=warnings,
-            note="no common tier between client data and canonical hashes",
+            where_to_find=extras.get("where_to_find", {}),
+            sources=extras.get("sources", []),
+            confidence=extras.get("confidence"),
+            canonical_field_status=extras.get("canonical_field_status", {}),
         )
+        base.update(overrides)
+        return ValidationResult(**base)
+
+    if not common_tiers:
+        return _result(note="no common tier between client data and canonical hashes")
 
     highest_tier = common_tiers[-1]
     if client_hashes[highest_tier] == canonical_hashes[highest_tier]:
-        return ValidationResult(
-            isin=normalized["isin"],
-            match=True,
-            tier_used=highest_tier,
-            mismatched_fields=[],
-            client_hashes=client_hashes,
-            canonical_hashes=canonical_hashes,
-            structural_flags=structural_flags,
-            warnings=warnings,
-        )
+        return _result(match=True, tier_used=highest_tier)
 
     # Mismatch — narrow down by checking lower tiers in order, identifying
     # which fields are introduced at the first failing tier.
@@ -130,26 +133,32 @@ def validate_bond_static(
         prev_fields = set(_TIER_FIELDS[ALL_TIERS[prev_idx]])
         introduced_at_failing = tuple(f for f in _TIER_FIELDS[first_failing_tier] if f not in prev_fields)
 
-    return ValidationResult(
-        isin=normalized["isin"],
-        match=False,
+    return _result(
         tier_used=highest_tier,
         mismatched_fields=list(introduced_at_failing),
-        client_hashes=client_hashes,
-        canonical_hashes=canonical_hashes,
-        structural_flags=structural_flags,
-        warnings=warnings,
         note=f"first divergence at tier {first_failing_tier}",
     )
 
 
 def _unpack_published(
     published: dict[str, Any] | dict[TierName, str],
-) -> tuple[dict[TierName, str], dict[str, bool]]:
-    """Accept either the full published-record shape or the bare hashes dict."""
+) -> tuple[dict[TierName, str], dict[str, bool], dict[str, Any]]:
+    """Accept either the full PublishedRecord shape or the bare hashes dict.
+
+    Returns (canonical_hashes, structural_flags, extras) where extras carries
+    the optional metadata fields (sources, confidence, where_to_find,
+    canonical_field_status) so the caller can propagate them into the
+    ValidationResult.
+    """
     if "tier_hashes" in published:
         hashes = dict(published["tier_hashes"])
         flags = dict(published.get("structural_flags") or {})
-        return hashes, flags
+        extras: dict[str, Any] = {
+            "where_to_find": dict(published.get("where_to_find") or {}),
+            "sources": list(published.get("sources") or []),
+            "confidence": published.get("confidence"),
+            "canonical_field_status": dict(published.get("canonical_field_status") or {}),
+        }
+        return hashes, flags, extras
     # Legacy: caller passed bare {tier_name: hash}.
-    return dict(published), {}
+    return dict(published), {}, {}

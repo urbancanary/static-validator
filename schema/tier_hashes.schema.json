@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/tier_hashes.schema.json",
+  "title": "TierHashes",
+  "description": "SHA-256 tier hashes for a bond's static fields. Each hash covers a different field subset; see SCHEMA.md §6.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "calc_hash_min": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Hash over isin, coupon, maturity_date, frequency, day_count."
+    },
+    "calc_hash_std": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Hash over the min set + issue_date, first_coupon_date."
+    },
+    "calc_hash_full": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "Hash over the std set + calendar, business_day_convention."
+    }
+  },
+  "minProperties": 1
+}

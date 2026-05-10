@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/structural_flags.schema.json",
+  "title": "StructuralFlags",
+  "description": "Structural complexity flags published alongside a bond's tier hashes. NOT inputs to the hash. See SCHEMA.md §10.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "is_bullet": {"type": "boolean", "description": "Single lump-sum principal at maturity."},
+    "is_sinker": {"type": "boolean", "description": "Principal amortizes on a published schedule before maturity."},
+    "is_amortizing": {"type": "boolean", "description": "Principal amortizes evenly across coupon dates."},
+    "is_callable": {"type": "boolean", "description": "Issuer holds one or more call options."},
+    "is_putable": {"type": "boolean", "description": "Holder holds one or more put options."},
+    "is_floater": {"type": "boolean", "description": "Coupon resets against an index; the coupon field carries the current fixing only."},
+    "is_step_up": {"type": "boolean", "description": "Coupon increases on a published schedule."},
+    "is_step_down": {"type": "boolean", "description": "Coupon decreases on a published schedule."},
+    "has_make_whole": {"type": "boolean", "description": "Make-whole call exists."},
+    "is_zero_coupon": {"type": "boolean", "description": "Bond pays no periodic coupon."}
+  },
+  "required": ["is_bullet"]
+}

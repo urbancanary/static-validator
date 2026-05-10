@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/published_record.schema.json",
+  "title": "PublishedRecord",
+  "description": "Response body for GET /hash/{isin}. Contains the canonical tier hashes, structural flags, sourcing, and where-to-find hints for any field the canonical record itself does not carry an explicit value for. No client data is involved.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "isin": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "static-validator schema version this record was computed under (e.g. '0.1')."
+    },
+    "asof": {
+      "type": "string",
+      "format": "date",
+      "description": "Date this canonical record was last refreshed."
+    },
+    "tier_hashes": {"$ref": "tier_hashes.schema.json"},
+    "structural_flags": {"$ref": "structural_flags.schema.json"},
+    "canonical_field_status": {
+      "type": "object",
+      "description": "What the canonical record holds per field. Tells clients which fields they can rely on us for vs which they need to source elsewhere.",
+      "patternProperties": {
+        "^(coupon|day_count|frequency|maturity_date|issue_date|first_coupon_date|calendar|business_day_convention)$": {
+          "type": "string",
+          "enum": ["explicit", "derived", "default", "unknown"],
+          "description": "explicit = canonical has a confirmed value; derived = computed from other fields per SCHEMA.md §4; default = canonical uses the schema default; unknown = canonical has no value, hashes that depend on it are omitted."
+        }
+      },
+      "additionalProperties": false
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Confidence in the canonical record per SCHEMA.md §5 of the launch plan: high = 3+ independent sources agree, medium = 2 sources, low = 1 source."
+    },
+    "sources": {
+      "type": "array",
+      "items": {"$ref": "source_reference.schema.json"},
+      "minItems": 1
+    },
+    "where_to_find": {
+      "$ref": "where_to_find.schema.json",
+      "description": "For fields where canonical_field_status is 'unknown' or 'default', hints for where a client can source a confirmed value."
+    }
+  },
+  "required": ["isin", "schema_version", "asof", "tier_hashes", "structural_flags", "canonical_field_status", "confidence", "sources"]
+}

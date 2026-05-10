@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://static-validator.dev/schema/validate_request.schema.json",
+  "title": "ValidateRequest",
+  "description": "Request body for POST /validate. Carries ONLY the public ISIN, the client's locally-computed tier hashes, and a bitmap of which fields the client has values for. There is intentionally no field that accepts bond field VALUES — that is the load-bearing privacy property documented in the project README.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "isin": {
+      "type": "string",
+      "pattern": "^[A-Z]{2}[A-Z0-9]{9}[0-9]$"
+    },
+    "client_tier_hashes": {
+      "$ref": "tier_hashes.schema.json",
+      "description": "Tier hashes the client computed locally over their static. Only tiers the client has full data for should be sent."
+    },
+    "client_field_presence": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "enum": ["coupon", "day_count", "frequency", "maturity_date", "issue_date", "first_coupon_date", "calendar", "business_day_convention"]
+      },
+      "description": "List of canonical schema fields the client has explicit values for. Used to compute which higher tiers the client is missing data for and which fields to recommend sourcing."
+    },
+    "schema_version": {
+      "type": "string",
+      "description": "Schema version the client computed hashes under. Server refuses to compare across versions."
+    }
+  },
+  "required": ["isin", "client_tier_hashes", "client_field_presence", "schema_version"]
+}
