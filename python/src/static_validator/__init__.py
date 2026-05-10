@@ -5,7 +5,10 @@ from .adapter import (
     disambiguate_bdc,
     disambiguate_calendar,
     disambiguate_day_count,
+    normalize_coupon_value,
+    normalize_frequency,
     normalize_to_published_record,
+    parse_loose_date,
 )
 from .canonicalize import (
     BDC_ENUM,
@@ -37,5 +40,8 @@ __all__ = [
     "disambiguate_bdc",
     "disambiguate_calendar",
     "disambiguate_day_count",
+    "normalize_coupon_value",
+    "normalize_frequency",
     "normalize_to_published_record",
+    "parse_loose_date",
 ]
