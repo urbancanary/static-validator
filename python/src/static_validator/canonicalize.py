@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from datetime import date
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 _ISIN_RE = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
@@ -68,7 +68,10 @@ def _format_number_text(value: Any) -> str:
     if isinstance(value, int):
         return str(value)
     if isinstance(value, (float, Decimal, str)):
-        d = Decimal(str(value)).quantize(Decimal(10) ** -_MAX_DECIMAL_PLACES)
+        try:
+            d = Decimal(str(value)).quantize(Decimal(10) ** -_MAX_DECIMAL_PLACES)
+        except InvalidOperation as exc:
+            raise ValueError(f"could not parse number: {value!r}") from exc
         s = format(d, "f")
         if "." in s:
             s = s.rstrip("0").rstrip(".")

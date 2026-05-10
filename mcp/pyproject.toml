@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "static-validator-mcp"
+version = "0.1.0"
+description = "MCP server for the static-validator: validate bond static data from inside Claude Desktop or any MCP-compatible client."
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+authors = [{name = "urbancanary"}]
+keywords = ["mcp", "model-context-protocol", "bond", "static-data", "validation"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Office/Business :: Financial",
+]
+dependencies = [
+    "static-validator>=0.1.0",
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+static-validator-mcp = "static_validator_mcp.server:main"
+
+[project.urls]
+Homepage = "https://github.com/urbancanary/static-validator"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+static_validator_mcp = ["fixtures/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
