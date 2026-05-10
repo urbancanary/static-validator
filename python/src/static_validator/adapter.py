@@ -248,23 +248,45 @@ _EXCEL_SERIAL_MIN = 30000  # ~1982-03-01
 _EXCEL_SERIAL_MAX = 75000  # ~2105-04-12
 
 
-def parse_loose_date(value: object) -> str:
+def _resolve_two_digit_year(yy: int, reference_date: date) -> int:
+    """Forward-pivot a 2-digit year against ``reference_date``.
+
+    Rule: anything ``>= reference.year % 100`` is in the current century;
+    anything below pivots into the next. With a 2026 reference: ``26..99``
+    map to ``2026..2099``; ``00..25`` map to ``2100..2125``. The pivot
+    therefore tracks "today" — sensible for forward-looking bond static.
+    """
+    if not (0 <= yy <= 99):
+        raise ValueError(f"two-digit year out of range: {yy!r}")
+    pivot = reference_date.year % 100
+    century_base = reference_date.year - pivot
+    if yy >= pivot:
+        return century_base + yy
+    return century_base + 100 + yy
+
+
+def parse_loose_date(value: object, *, reference_date: date | None = None) -> str:
     """Parse a possibly non-canonical date input to ISO 8601 ``YYYY-MM-DD``.
 
     Accepts:
-      - ``date`` / ``datetime``-shaped objects with isoformat-friendly years
+      - ``date`` / ``datetime``-shaped objects
       - ISO 8601 ``YYYY-MM-DD``
       - Compact ISO ``YYYYMMDD``
       - Textual month: ``5-May-2026``, ``5 May 2026``, ``May 5, 2026``
+      - Textual month with 2-digit year: ``5-May-26`` (forward-pivoted
+        against ``reference_date``; defaults to ``date.today()``)
       - Year-first all-numeric: ``YYYY/MM/DD``
       - Excel 1900-based serial dates as ``int``/``float`` in
-        [_EXCEL_SERIAL_MIN, _EXCEL_SERIAL_MAX]
+        ``[_EXCEL_SERIAL_MIN, _EXCEL_SERIAL_MAX]``
 
     Refuses (raises ``ValueError``):
       - All-numeric ``DD/MM/YYYY`` or ``MM/DD/YYYY`` — genuinely ambiguous
-      - Two-digit years (e.g. ``5-May-26``) — century guessing is unsafe
+        without batch context (resolved by ``infer_batch_format`` in a
+        future revision)
       - Anything else
     """
+    ref = reference_date or date.today()
+
     if isinstance(value, bool):
         raise ValueError(f"booleans are not dates: {value!r}")
     if isinstance(value, date):
@@ -293,24 +315,16 @@ def parse_loose_date(value: object) -> str:
         d_s, mon_s, y_s = m.group(1), m.group(2).upper(), m.group(3)
         if mon_s not in _MONTH_NAMES:
             raise ValueError(f"unrecognised month name in {value!r}")
-        if len(y_s) != 4:
-            raise ValueError(
-                f"date {value!r} has a 2-digit year; provide a 4-digit year "
-                "to avoid century ambiguity"
-            )
-        return date(int(y_s), _MONTH_NAMES[mon_s], int(d_s)).isoformat()
+        year = _parse_year_field(y_s, value, ref)
+        return date(year, _MONTH_NAMES[mon_s], int(d_s)).isoformat()
 
     m = _MONTHNAME_DAY_YEAR_RE.match(s)
     if m:
         mon_s, d_s, y_s = m.group(1).upper(), m.group(2), m.group(3)
         if mon_s not in _MONTH_NAMES:
             raise ValueError(f"unrecognised month name in {value!r}")
-        if len(y_s) != 4:
-            raise ValueError(
-                f"date {value!r} has a 2-digit year; provide a 4-digit year "
-                "to avoid century ambiguity"
-            )
-        return date(int(y_s), _MONTH_NAMES[mon_s], int(d_s)).isoformat()
+        year = _parse_year_field(y_s, value, ref)
+        return date(year, _MONTH_NAMES[mon_s], int(d_s)).isoformat()
 
     m = _NUMERIC_SLASH_RE.match(s)
     if m:
@@ -319,11 +333,21 @@ def parse_loose_date(value: object) -> str:
             return date(int(a_s), int(b_s), int(c_s)).isoformat()
         raise ValueError(
             f"date {value!r} is ambiguous: cannot tell DD/MM/YYYY from "
-            "MM/DD/YYYY. Provide ISO 8601 'YYYY-MM-DD' or a textual month "
-            "(e.g. '5-May-2026')."
+            "MM/DD/YYYY without batch context. Provide ISO 8601 'YYYY-MM-DD' "
+            "or a textual month (e.g. '5-May-2026')."
         )
 
     raise ValueError(f"unrecognised date format: {value!r}")
+
+
+def _parse_year_field(y_s: str, original: str, ref: date) -> int:
+    if len(y_s) == 4:
+        return int(y_s)
+    if len(y_s) == 2:
+        return _resolve_two_digit_year(int(y_s), ref)
+    raise ValueError(
+        f"date {original!r} has a {len(y_s)}-digit year; expected 2 or 4 digits"
+    )
 
 
 def _excel_serial_to_iso(serial: float) -> str:
@@ -736,7 +760,9 @@ def normalize_to_published_record(
         raw_row["coupon"], allow_below_half_pct=allow_below_half_pct_coupon,
     )
     field_status["coupon"] = "explicit"
-    canonical_record["maturity_date"] = parse_loose_date(raw_row["maturity_date"])
+    canonical_record["maturity_date"] = parse_loose_date(
+        raw_row["maturity_date"], reference_date=asof,
+    )
     field_status["maturity_date"] = "explicit"
     canonical_record["frequency"] = normalize_frequency(raw_row["frequency"])
     field_status["frequency"] = "explicit"
@@ -757,7 +783,7 @@ def normalize_to_published_record(
     for field_name in ("issue_date", "first_coupon_date"):
         v = raw_row.get(field_name)
         if v is not None:
-            canonical_record[field_name] = parse_loose_date(v)
+            canonical_record[field_name] = parse_loose_date(v, reference_date=asof)
             field_status[field_name] = "explicit"
         else:
             field_status[field_name] = "derived"

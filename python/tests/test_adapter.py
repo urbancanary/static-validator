@@ -254,10 +254,24 @@ class TestParseLooseDate:
         with pytest.raises(ValueError, match="ambiguous"):
             parse_loose_date(raw)
 
-    @pytest.mark.parametrize("raw", ["5-May-26", "May 5, 26"])
-    def test_two_digit_year_rejected(self, raw):
-        with pytest.raises(ValueError, match="2-digit"):
-            parse_loose_date(raw)
+    @pytest.mark.parametrize("raw, expected", [
+        # reference 2026-05-10: pivot at 26. yy>=26 → 20yy, yy<26 → 21yy.
+        ("5-May-26", "2026-05-05"),
+        ("5-May-27", "2027-05-05"),
+        ("5-May-99", "2099-05-05"),
+        ("5-May-25", "2125-05-05"),
+        ("5-May-00", "2100-05-05"),
+        ("May 5, 56", "2056-05-05"),
+        ("23-Jul-60", "2060-07-23"),
+        ("23 Jul 24", "2124-07-23"),
+    ])
+    def test_two_digit_year_pivot_forward(self, raw, expected):
+        assert parse_loose_date(raw, reference_date=date(2026, 5, 10)) == expected
+
+    def test_two_digit_year_pivot_tracks_reference(self):
+        # Same input, different reference date → different century.
+        assert parse_loose_date("5-May-30", reference_date=date(2026, 5, 10)) == "2030-05-05"
+        assert parse_loose_date("5-May-30", reference_date=date(2031, 1, 1)) == "2130-05-05"
 
     def test_excel_serial_in_window_accepted(self):
         # 46152 == 2026-05-10 in Excel's 1900-based calendar.
