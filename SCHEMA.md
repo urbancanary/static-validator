@@ -8,9 +8,16 @@ This document defines how a bond's static data is normalized and hashed for the 
 
 ## 1. Scope
 
-The schema covers the fields needed to reproduce a vanilla bullet bond's accrual and yield calculation in a deterministic way. It does not attempt to cover callables, sinkers, floaters, step-ups, or other structurally non-standard bonds in v0.1; those are out of scope until a future version (`structured_hash`) addresses them explicitly.
+The schema covers the static fields of a fixed-rate bond — coupon, day count, frequency, maturity, issue date, first coupon date, and (optionally) calendar / BDC. These fields are common to **every** fixed-rate bond, vanilla or structured: a sinker still has a coupon and a maturity; a callable still has a day count and a frequency. Hashing those fields tells you the static agrees with the canonical record, full stop.
 
-A bond is identified by its ISIN. The hash is per-ISIN.
+What the schema deliberately does **not** include:
+- Cashflow schedules (sinker amortization steps, irregular coupons, step-up trajectories) — these are downstream of the static and warrant a separate `schedule_hash` in a future version.
+- Call / put schedules — same.
+- Floating-rate index references (LIBOR/SOFR cap/floor specs) — floaters need their own schema for index, spread, cap, floor; until then their `coupon` field is treated as the current fixing.
+
+Structural complexity is communicated via the **structural flags** in §10 — metadata published alongside the tier hashes, not part of the hash inputs. This keeps the static-validation guarantee usable for every bond while making the structural complexity visible.
+
+A bond is identified by its ISIN. The hashes and structural flags are per-ISIN.
 
 ## 2. Field set
 
@@ -151,13 +158,13 @@ Current version: **0.1**.
 
 ## 8. Out of scope for v0.1
 
-The following are explicitly NOT covered by v0.1 hashes. Future schemas (`structured_hash`, `display_hash`, `rating_hash`) will address them in dedicated versions.
+The following are NOT inputs to v0.1 tier hashes. Some are surfaced as metadata via the structural flags in §10; others are covered by future schemas.
 
-- Callables, putables, sinkers, amortizers, floaters, step-ups
-- Display fields (ticker, description, issuer name, country)
-- Ratings (Moody's, S&P, Fitch, composite)
-- Cashflow schedules (derived from the calc fields; covered by a future `cashflow_hash`)
-- Pricing or analytics (yield, duration, OAS, spread — these are computations, not static)
+- **Cashflow / call / sink / step schedules** — these are downstream of the static fields and warrant a dedicated `schedule_hash` in a future version. Structural flags in §10 indicate *whether* a bond has these features; the schedule itself is not yet hashed.
+- **Display fields** (ticker, description, issuer name, country) — future `display_hash`.
+- **Ratings** (Moody's, S&P, Fitch, composite) — future `rating_hash`.
+- **Floating-rate references** (index, spread, cap, floor) — until a future `floater_hash`, floaters' `coupon` field carries the current fixing only and the `is_floater` flag warns the consumer.
+- **Pricing or analytics** (yield, duration, OAS, spread) — these are computations, not static.
 
 ## 9. Open questions for v0.2
 
@@ -165,5 +172,54 @@ The following are explicitly NOT covered by v0.1 hashes. Future schemas (`struct
 - Should we publish a `calc_hash_min_no_dc` tier for clients who have everything except day_count (a depressingly common case)? Trade-off: more tiers, weaker collision resistance per tier.
 - How do we represent step-up coupons in a future `calc_hash` extension without forcing the `coupon` field to become a list?
 - Calendar default (`NULL_CALENDAR`) is unsafe for OAS — should `calc_hash_full` reject `NULL_CALENDAR` as a derived default and force explicit specification?
+- Structural flags (§10): should the flag set be hashed into a separate `structural_hash` so clients can detect when the canonical record's structural assessment changes? Cheap to add; useful for change detection.
 
 These will be resolved alongside the v0.2 reference SDK, where implementation forces decisions.
+
+## 10. Structural flags (metadata, not hash inputs)
+
+Structural flags describe whether a bond has features beyond the vanilla bullet shape. They are published **alongside** the tier hashes in the public record, but are NOT inputs to the calc hash itself. This separation is deliberate: the static fields (coupon, day count, etc.) are the same regardless of structural complexity, so hashing them gives a meaningful guarantee for every bond. The structural complexity is communicated as metadata so consumers can decide whether to trust their downstream engine to handle it correctly.
+
+| Flag | Type | Default | Meaning when `true` |
+|---|---|---|---|
+| `is_bullet` | bool | `true` | The bond pays a single lump-sum principal at maturity. (Default true; set false when any other structural flag is true.) |
+| `is_sinker` | bool | `false` | Principal amortizes on a published schedule before maturity. Customer's QuantLib instance MUST handle the sinker schedule or pricing will be wrong in late years. |
+| `is_amortizing` | bool | `false` | Principal amortizes evenly across coupon dates. Distinct from `is_sinker` (which has a discrete schedule). |
+| `is_callable` | bool | `false` | Issuer holds one or more call options. Yield-to-worst should be used in place of yield-to-maturity for risk metrics. |
+| `is_putable` | bool | `false` | Holder holds one or more put options. |
+| `is_floater` | bool | `false` | Coupon resets against an index. The `coupon` field carries the current fixing, NOT a permanent rate. |
+| `is_step_up` | bool | `false` | Coupon increases on a published schedule. Future `step_schedule_hash` will cover this. |
+| `is_step_down` | bool | `false` | Coupon decreases on a published schedule. |
+| `has_make_whole` | bool | `false` | Make-whole call exists. |
+| `is_zero_coupon` | bool | `false` | Bond pays no periodic coupon (`coupon = 0`, `frequency = 0`). |
+
+**Reference record shape** (what the public read API returns per ISIN):
+
+```json
+{
+  "isin": "US698299BL70",
+  "schema_version": "0.1",
+  "asof": "2026-05-10",
+  "tier_hashes": {
+    "calc_hash_min": "sha256:...",
+    "calc_hash_std": "sha256:...",
+    "calc_hash_full": "sha256:..."
+  },
+  "structural_flags": {
+    "is_bullet": false,
+    "is_sinker": true,
+    "is_amortizing": false,
+    "is_callable": false,
+    "is_putable": false,
+    "is_floater": false,
+    "is_step_up": false,
+    "is_step_down": false,
+    "has_make_whole": false,
+    "is_zero_coupon": false
+  },
+  "confidence": "high",
+  "sources": ["EDGAR-424B5-0001193125-20-252589"]
+}
+```
+
+The structural flags are part of the **published record**, not part of the **client's input**. Clients send only their static for hashing; they consume the flags from the response to know whether their engine must handle structural features.

@@ -31,9 +31,12 @@ When your hash matches ours, you have cryptographic confirmation your static agr
 
 ## What's in this repo (v0.1)
 
-- [`SCHEMA.md`](SCHEMA.md) — the canonical schema spec: field list, JCS normalization, derivation rules for missing fields, tier hash construction
-- [`examples/`](examples/) — golden test fixtures (canonical JSON + expected tier hashes for known bonds; populated alongside the reference SDK in v0.2)
+- [`SCHEMA.md`](SCHEMA.md) — the canonical schema spec: field list, JCS normalization, derivation rules, tier hash construction, and structural metadata flags
+- [`python/`](python/) — reference Python SDK with golden test fixtures (`pip install -e .` from `python/`)
+- [`examples/`](examples/) — additional canonical JSON examples for spec readers
 - `LICENSE` — MIT
+
+The schema applies to **every fixed-rate bond**, not only vanilla bullets. Structural complexity (sinkers, callables, floaters, etc.) is communicated via metadata flags published alongside the tier hashes — see SCHEMA.md §10. A customer matching `calc_hash` knows the static fields agree; the structural flags tell them whether their downstream engine needs to handle anything beyond a vanilla bullet.
 
 ## What's coming next
 

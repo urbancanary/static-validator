@@ -1,0 +1,9 @@
+{
+  "isin": "US698299BL70",
+  "coupon": 3.87,
+  "maturity_date": "2060-07-23",
+  "frequency": 2,
+  "day_count": "BOND_BASIS_30_360",
+  "issue_date": "2020-09-30",
+  "first_coupon_date": "2021-01-23"
+}
