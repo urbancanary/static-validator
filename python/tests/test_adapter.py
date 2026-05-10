@@ -254,10 +254,38 @@ class TestParseLooseDate:
         with pytest.raises(ValueError, match="ambiguous"):
             parse_loose_date(raw)
 
-    @pytest.mark.parametrize("raw", ["5-May-26", "May 5, 26"])
-    def test_two_digit_year_rejected(self, raw):
-        with pytest.raises(ValueError, match="2-digit"):
-            parse_loose_date(raw)
+    @pytest.mark.parametrize("raw, expected", [
+        # reference 2026-05-10: pivot at 26. yy>=26 → 20yy, yy<26 → 21yy.
+        ("5-May-26", "2026-05-05"),
+        ("5-May-27", "2027-05-05"),
+        ("5-May-99", "2099-05-05"),
+        ("5-May-25", "2125-05-05"),
+        ("5-May-00", "2100-05-05"),
+        ("May 5, 56", "2056-05-05"),
+        ("23-Jul-60", "2060-07-23"),
+        ("23 Jul 24", "2124-07-23"),
+    ])
+    def test_two_digit_year_pivot_forward(self, raw, expected):
+        assert parse_loose_date(raw, reference_date=date(2026, 5, 10)) == expected
+
+    def test_two_digit_year_pivot_tracks_reference(self):
+        # Same input, different reference date → different century.
+        assert parse_loose_date("5-May-30", reference_date=date(2026, 5, 10)) == "2030-05-05"
+        assert parse_loose_date("5-May-30", reference_date=date(2031, 1, 1)) == "2130-05-05"
+
+    @pytest.mark.parametrize("raw, expected", [
+        # reference 2026-05-10, backward pivot: yy<=26 → 20yy, yy>26 → 19yy.
+        ("30-Sep-20", "2020-09-30"),
+        ("23-Jan-21", "2021-01-23"),
+        ("5-May-26", "2026-05-05"),
+        ("5-May-99", "1999-05-05"),
+        ("5-May-27", "1927-05-05"),
+        ("5-May-00", "2000-05-05"),
+    ])
+    def test_two_digit_year_pivot_backward(self, raw, expected):
+        assert parse_loose_date(
+            raw, reference_date=date(2026, 5, 10), assume_future_year=False,
+        ) == expected
 
     def test_excel_serial_in_window_accepted(self):
         # 46152 == 2026-05-10 in Excel's 1900-based calendar.
@@ -394,6 +422,42 @@ class TestNormalizeToPublishedRecord:
         assert record["canonical_field_status"]["day_count"] == "unknown"
         assert "day_count" in record["where_to_find"]
         assert record["tier_hashes"] == {}
+
+    def test_two_digit_years_pivot_per_field(self):
+        # maturity_date 2-digit year is forward-pivoted; issue_date and
+        # first_coupon_date are backward-pivoted. With asof=2026-05-10:
+        #   maturity '60' → 2060 (forward)
+        #   issue    '20' → 2020 (backward)
+        #   first    '21' → 2021 (backward)
+        record = normalize_to_published_record(
+            raw_row={
+                "coupon": 3.87,
+                "maturity_date": "23-Jul-60",
+                "frequency": 2,
+                "day_count": "BOND_BASIS_30_360",
+                "issue_date": "30-Sep-20",
+                "first_coupon_date": "23-Jan-21",
+            },
+            isin=PANAMA_ISIN,
+            asof=date(2026, 5, 10),
+            structural_flags={"is_bullet": False, "is_sinker": True},
+            sources=[{"id": "vendor-feed", "kind": "vendor"}],
+        )
+        canonical = normalize_to_published_record(
+            raw_row={
+                "coupon": 3.87,
+                "maturity_date": "2060-07-23",
+                "frequency": 2,
+                "day_count": "BOND_BASIS_30_360",
+                "issue_date": "2020-09-30",
+                "first_coupon_date": "2021-01-23",
+            },
+            isin=PANAMA_ISIN,
+            asof=date(2026, 5, 10),
+            structural_flags={"is_bullet": False, "is_sinker": True},
+            sources=[{"id": "vendor-feed", "kind": "vendor"}],
+        )
+        assert record["tier_hashes"] == canonical["tier_hashes"]
 
     def test_vendor_shaped_row_normalises_dates_freq_calendar_bdc(self):
         # Everything ambiguous-but-resolvable: textual date, "Semi", BDC and
