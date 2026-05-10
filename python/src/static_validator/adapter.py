@@ -248,24 +248,36 @@ _EXCEL_SERIAL_MIN = 30000  # ~1982-03-01
 _EXCEL_SERIAL_MAX = 75000  # ~2105-04-12
 
 
-def _resolve_two_digit_year(yy: int, reference_date: date) -> int:
-    """Forward-pivot a 2-digit year against ``reference_date``.
+def _resolve_two_digit_year(
+    yy: int,
+    reference_date: date,
+    *,
+    assume_future: bool = True,
+) -> int:
+    """Pivot a 2-digit year against ``reference_date``.
 
-    Rule: anything ``>= reference.year % 100`` is in the current century;
-    anything below pivots into the next. With a 2026 reference: ``26..99``
-    map to ``2026..2099``; ``00..25`` map to ``2100..2125``. The pivot
-    therefore tracks "today" — sensible for forward-looking bond static.
+    Forward (``assume_future=True``, the default — for maturity dates):
+        ``yy >= ref.year % 100`` → current century, else next century.
+        With ref=2026: ``26..99`` → ``2026..2099``; ``00..25`` → ``2100..2125``.
+    Backward (``assume_future=False`` — for issue / first-coupon dates):
+        ``yy <= ref.year % 100`` → current century, else previous century.
+        With ref=2026: ``00..26`` → ``2000..2026``; ``27..99`` → ``1927..1999``.
     """
     if not (0 <= yy <= 99):
         raise ValueError(f"two-digit year out of range: {yy!r}")
     pivot = reference_date.year % 100
     century_base = reference_date.year - pivot
-    if yy >= pivot:
-        return century_base + yy
-    return century_base + 100 + yy
+    if assume_future:
+        return century_base + yy if yy >= pivot else century_base + 100 + yy
+    return century_base + yy if yy <= pivot else century_base - 100 + yy
 
 
-def parse_loose_date(value: object, *, reference_date: date | None = None) -> str:
+def parse_loose_date(
+    value: object,
+    *,
+    reference_date: date | None = None,
+    assume_future_year: bool = True,
+) -> str:
     """Parse a possibly non-canonical date input to ISO 8601 ``YYYY-MM-DD``.
 
     Accepts:
@@ -273,8 +285,11 @@ def parse_loose_date(value: object, *, reference_date: date | None = None) -> st
       - ISO 8601 ``YYYY-MM-DD``
       - Compact ISO ``YYYYMMDD``
       - Textual month: ``5-May-2026``, ``5 May 2026``, ``May 5, 2026``
-      - Textual month with 2-digit year: ``5-May-26`` (forward-pivoted
-        against ``reference_date``; defaults to ``date.today()``)
+      - Textual month with 2-digit year: ``5-May-26``. Pivoted against
+        ``reference_date`` (defaults to ``date.today()``); forward-leaning
+        when ``assume_future_year=True`` (default — appropriate for
+        maturity dates), backward-leaning otherwise (for issue and
+        first-coupon dates).
       - Year-first all-numeric: ``YYYY/MM/DD``
       - Excel 1900-based serial dates as ``int``/``float`` in
         ``[_EXCEL_SERIAL_MIN, _EXCEL_SERIAL_MAX]``
@@ -315,7 +330,7 @@ def parse_loose_date(value: object, *, reference_date: date | None = None) -> st
         d_s, mon_s, y_s = m.group(1), m.group(2).upper(), m.group(3)
         if mon_s not in _MONTH_NAMES:
             raise ValueError(f"unrecognised month name in {value!r}")
-        year = _parse_year_field(y_s, value, ref)
+        year = _parse_year_field(y_s, value, ref, assume_future_year)
         return date(year, _MONTH_NAMES[mon_s], int(d_s)).isoformat()
 
     m = _MONTHNAME_DAY_YEAR_RE.match(s)
@@ -323,7 +338,7 @@ def parse_loose_date(value: object, *, reference_date: date | None = None) -> st
         mon_s, d_s, y_s = m.group(1).upper(), m.group(2), m.group(3)
         if mon_s not in _MONTH_NAMES:
             raise ValueError(f"unrecognised month name in {value!r}")
-        year = _parse_year_field(y_s, value, ref)
+        year = _parse_year_field(y_s, value, ref, assume_future_year)
         return date(year, _MONTH_NAMES[mon_s], int(d_s)).isoformat()
 
     m = _NUMERIC_SLASH_RE.match(s)
@@ -340,11 +355,11 @@ def parse_loose_date(value: object, *, reference_date: date | None = None) -> st
     raise ValueError(f"unrecognised date format: {value!r}")
 
 
-def _parse_year_field(y_s: str, original: str, ref: date) -> int:
+def _parse_year_field(y_s: str, original: str, ref: date, assume_future: bool) -> int:
     if len(y_s) == 4:
         return int(y_s)
     if len(y_s) == 2:
-        return _resolve_two_digit_year(int(y_s), ref)
+        return _resolve_two_digit_year(int(y_s), ref, assume_future=assume_future)
     raise ValueError(
         f"date {original!r} has a {len(y_s)}-digit year; expected 2 or 4 digits"
     )
@@ -783,7 +798,11 @@ def normalize_to_published_record(
     for field_name in ("issue_date", "first_coupon_date"):
         v = raw_row.get(field_name)
         if v is not None:
-            canonical_record[field_name] = parse_loose_date(v, reference_date=asof)
+            # These fields are backward-leaning: a 2-digit year is almost
+            # always recent past, not the next century.
+            canonical_record[field_name] = parse_loose_date(
+                v, reference_date=asof, assume_future_year=False,
+            )
             field_status[field_name] = "explicit"
         else:
             field_status[field_name] = "derived"
