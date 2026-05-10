@@ -1,5 +1,12 @@
 """static-validator: canonical bond static hashing and validation."""
 
+from .adapter import (
+    FieldResolution,
+    disambiguate_bdc,
+    disambiguate_calendar,
+    disambiguate_day_count,
+    normalize_to_published_record,
+)
 from .canonicalize import (
     BDC_ENUM,
     CALENDAR_ENUM,
@@ -26,4 +33,9 @@ __all__ = [
     "compute_all_tiers",
     "ValidationResult",
     "validate_bond_static",
+    "FieldResolution",
+    "disambiguate_bdc",
+    "disambiguate_calendar",
+    "disambiguate_day_count",
+    "normalize_to_published_record",
 ]

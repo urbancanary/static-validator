@@ -11,7 +11,7 @@ optional extra later (jsonschema package).
 
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, TypedDict
 
 # ---- reusable building blocks ----
 
