@@ -34,7 +34,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from .canonicalize import (
@@ -126,10 +127,333 @@ def _prospectus_match(prospectus_text: str) -> tuple[str, str] | None:
     return None
 
 
+# ---- Calendar synonyms ----
+#
+# Common vendor / desk shorthands → canonical CALENDAR_ENUM. Keys are matched
+# after normalising the input through ``_synonym_key`` (uppercase, separators
+# collapsed to a single space). A "US" or "USD" alone is intentionally
+# *ambiguous* between US_SETTLEMENT and US_GOVERNMENT and is left unresolved
+# with a hint, mirroring the day_count "30/360" pattern.
+
+_CALENDAR_SYNONYMS: dict[str, str] = {
+    "NULL": "NULL_CALENDAR",
+    "NULL CALENDAR": "NULL_CALENDAR",
+    "NONE": "NULL_CALENDAR",
+    "NO ADJUSTMENT": "NULL_CALENDAR",
+    "WEEKEND": "WEEKENDS_ONLY",
+    "WEEKENDS": "WEEKENDS_ONLY",
+    "WEEKENDS ONLY": "WEEKENDS_ONLY",
+    "US SETTLEMENT": "US_SETTLEMENT",
+    "NYC": "US_SETTLEMENT",
+    "NEW YORK": "US_SETTLEMENT",
+    "NYSE": "US_SETTLEMENT",
+    "US GOVERNMENT": "US_GOVERNMENT",
+    "USGS": "US_GOVERNMENT",
+    "FED": "US_GOVERNMENT",
+    "FEDERAL RESERVE": "US_GOVERNMENT",
+    "US TREASURY": "US_GOVERNMENT",
+    "TREASURY": "US_GOVERNMENT",
+    "EUR": "TARGET",
+    "EURO": "TARGET",
+    "TARGET2": "TARGET",
+    "T2": "TARGET",
+    "ECB": "TARGET",
+    "GBP": "UK_SETTLEMENT",
+    "UK": "UK_SETTLEMENT",
+    "LONDON": "UK_SETTLEMENT",
+    "LDN": "UK_SETTLEMENT",
+}
+
+_AMBIGUOUS_CALENDAR_HINTS: dict[str, tuple[str, ...]] = {
+    "US": ("US_SETTLEMENT", "US_GOVERNMENT"),
+    "USD": ("US_SETTLEMENT", "US_GOVERNMENT"),
+}
+
+
+# ---- BDC synonyms ----
+
+_BDC_SYNONYMS: dict[str, str] = {
+    "U": "UNADJUSTED",
+    "UNADJ": "UNADJUSTED",
+    "NONE": "UNADJUSTED",
+    "F": "FOLLOWING",
+    "FOL": "FOLLOWING",
+    "FLW": "FOLLOWING",
+    "MF": "MODIFIED_FOLLOWING",
+    "MOD FOL": "MODIFIED_FOLLOWING",
+    "MOD FOLLOWING": "MODIFIED_FOLLOWING",
+    "MODIFIED FOL": "MODIFIED_FOLLOWING",
+    "MODIFIED FOLLOWING": "MODIFIED_FOLLOWING",
+    "MODFOLLOWING": "MODIFIED_FOLLOWING",
+    "MODIFIEDFOLLOWING": "MODIFIED_FOLLOWING",
+    "P": "PRECEDING",
+    "PREC": "PRECEDING",
+    "MP": "MODIFIED_PRECEDING",
+    "MOD PREC": "MODIFIED_PRECEDING",
+    "MOD PRECEDING": "MODIFIED_PRECEDING",
+    "MODIFIED PREC": "MODIFIED_PRECEDING",
+    "MODIFIED PRECEDING": "MODIFIED_PRECEDING",
+    "MODIFIEDPRECEDING": "MODIFIED_PRECEDING",
+}
+
+
+# ---- Frequency synonyms ----
+
+_FREQUENCY_SYNONYMS: dict[str, int] = {
+    "0": 0, "Z": 0, "ZERO": 0, "ZERO COUPON": 0, "ZEROCOUPON": 0, "NONE": 0,
+    "1": 1, "A": 1, "ANN": 1, "ANNUAL": 1, "ANNUALLY": 1,
+    "2": 2, "S": 2, "SA": 2, "SEMI": 2, "SEMI ANNUAL": 2,
+    "SEMIANNUAL": 2, "SEMIANNUALLY": 2, "SEMI ANNUALLY": 2,
+    "4": 4, "Q": 4, "QTR": 4, "QUARTER": 4, "QUARTERLY": 4,
+    "12": 12, "M": 12, "MO": 12, "MONTH": 12, "MONTHLY": 12,
+}
+
+
+def _synonym_key(s: str) -> str:
+    """Uppercase, strip, collapse runs of whitespace / dashes / underscores /
+    slashes / dots into a single space. The keys in the synonym tables
+    follow this convention."""
+    return re.sub(r"[\s\-_/.]+", " ", s.strip().upper()).strip()
+
+
+# ---- Loose date parsing ----
+
+_MONTH_NAMES: dict[str, int] = {
+    "JAN": 1, "JANUARY": 1,
+    "FEB": 2, "FEBRUARY": 2,
+    "MAR": 3, "MARCH": 3,
+    "APR": 4, "APRIL": 4,
+    "MAY": 5,
+    "JUN": 6, "JUNE": 6,
+    "JUL": 7, "JULY": 7,
+    "AUG": 8, "AUGUST": 8,
+    "SEP": 9, "SEPT": 9, "SEPTEMBER": 9,
+    "OCT": 10, "OCTOBER": 10,
+    "NOV": 11, "NOVEMBER": 11,
+    "DEC": 12, "DECEMBER": 12,
+}
+
+_ISO_DATE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})$")
+_COMPACT_ISO_RE = re.compile(r"^(\d{4})(\d{2})(\d{2})$")
+_DAY_MONTHNAME_YEAR_RE = re.compile(
+    r"^(\d{1,2})[\s\-/]+([A-Za-z]+)[\s\-/,]+(\d{2,4})$"
+)
+_MONTHNAME_DAY_YEAR_RE = re.compile(
+    r"^([A-Za-z]+)[\s\-/]+(\d{1,2})[\s,\-/]+(\d{2,4})$"
+)
+_NUMERIC_SLASH_RE = re.compile(r"^(\d{1,4})[\-/](\d{1,2})[\-/](\d{1,4})$")
+
+_EXCEL_EPOCH = date(1899, 12, 30)
+_EXCEL_SERIAL_MIN = 30000  # ~1982-03-01
+_EXCEL_SERIAL_MAX = 75000  # ~2105-04-12
+
+
+def parse_loose_date(value: object) -> str:
+    """Parse a possibly non-canonical date input to ISO 8601 ``YYYY-MM-DD``.
+
+    Accepts:
+      - ``date`` / ``datetime``-shaped objects with isoformat-friendly years
+      - ISO 8601 ``YYYY-MM-DD``
+      - Compact ISO ``YYYYMMDD``
+      - Textual month: ``5-May-2026``, ``5 May 2026``, ``May 5, 2026``
+      - Year-first all-numeric: ``YYYY/MM/DD``
+      - Excel 1900-based serial dates as ``int``/``float`` in
+        [_EXCEL_SERIAL_MIN, _EXCEL_SERIAL_MAX]
+
+    Refuses (raises ``ValueError``):
+      - All-numeric ``DD/MM/YYYY`` or ``MM/DD/YYYY`` — genuinely ambiguous
+      - Two-digit years (e.g. ``5-May-26``) — century guessing is unsafe
+      - Anything else
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"booleans are not dates: {value!r}")
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, (int, float)):
+        return _excel_serial_to_iso(value)
+    if not isinstance(value, str):
+        raise TypeError(f"unsupported date type: {type(value).__name__}")
+
+    s = value.strip()
+    if not s:
+        raise ValueError("empty date string")
+
+    m = _ISO_DATE_RE.match(s)
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        return date(y, mo, d).isoformat()
+
+    m = _COMPACT_ISO_RE.match(s)
+    if m:
+        y, mo, d = (int(x) for x in m.groups())
+        return date(y, mo, d).isoformat()
+
+    m = _DAY_MONTHNAME_YEAR_RE.match(s)
+    if m:
+        d_s, mon_s, y_s = m.group(1), m.group(2).upper(), m.group(3)
+        if mon_s not in _MONTH_NAMES:
+            raise ValueError(f"unrecognised month name in {value!r}")
+        if len(y_s) != 4:
+            raise ValueError(
+                f"date {value!r} has a 2-digit year; provide a 4-digit year "
+                "to avoid century ambiguity"
+            )
+        return date(int(y_s), _MONTH_NAMES[mon_s], int(d_s)).isoformat()
+
+    m = _MONTHNAME_DAY_YEAR_RE.match(s)
+    if m:
+        mon_s, d_s, y_s = m.group(1).upper(), m.group(2), m.group(3)
+        if mon_s not in _MONTH_NAMES:
+            raise ValueError(f"unrecognised month name in {value!r}")
+        if len(y_s) != 4:
+            raise ValueError(
+                f"date {value!r} has a 2-digit year; provide a 4-digit year "
+                "to avoid century ambiguity"
+            )
+        return date(int(y_s), _MONTH_NAMES[mon_s], int(d_s)).isoformat()
+
+    m = _NUMERIC_SLASH_RE.match(s)
+    if m:
+        a_s, b_s, c_s = m.group(1), m.group(2), m.group(3)
+        if len(a_s) == 4 and len(c_s) <= 2:
+            return date(int(a_s), int(b_s), int(c_s)).isoformat()
+        raise ValueError(
+            f"date {value!r} is ambiguous: cannot tell DD/MM/YYYY from "
+            "MM/DD/YYYY. Provide ISO 8601 'YYYY-MM-DD' or a textual month "
+            "(e.g. '5-May-2026')."
+        )
+
+    raise ValueError(f"unrecognised date format: {value!r}")
+
+
+def _excel_serial_to_iso(serial: float) -> str:
+    if serial != int(serial):
+        n = int(serial)
+    else:
+        n = int(serial)
+    if n < _EXCEL_SERIAL_MIN or n > _EXCEL_SERIAL_MAX:
+        raise ValueError(
+            f"numeric date {serial!r} is outside the accepted Excel-serial "
+            f"window [{_EXCEL_SERIAL_MIN}, {_EXCEL_SERIAL_MAX}]; refusing as "
+            "likely misencoded. Provide an ISO 8601 string instead."
+        )
+    return (_EXCEL_EPOCH + timedelta(days=n)).isoformat()
+
+
+# ---- Loose coupon parsing ----
+
+def normalize_coupon_value(
+    value: object,
+    *,
+    allow_below_half_pct: bool = False,
+) -> int | float:
+    """Coerce a coupon input to its canonical numeric form.
+
+    Conservative: refuses values strictly between 0 and 0.5 unless
+    ``allow_below_half_pct=True``. A value like ``0.045`` is overwhelmingly
+    likely to be a fraction (4.5%) miscoded as a percentage; silently
+    accepting it would corrupt the hash. Genuine sub-0.5% coupons (rare
+    JGBs, negative-rate-era issuance) require the explicit opt-in.
+
+    Trailing ``%`` is tolerated. Returns ``int`` for whole percentages
+    (so the canonical hash sees ``5`` not ``5.0``), ``float`` otherwise.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"booleans are not coupons: {value!r}")
+    if isinstance(value, str):
+        s = value.strip().rstrip("%").strip()
+        if not s:
+            raise ValueError("empty coupon string")
+        try:
+            num = Decimal(s)
+        except InvalidOperation as exc:
+            raise ValueError(f"could not parse coupon: {value!r}") from exc
+    elif isinstance(value, (int, float, Decimal)):
+        num = Decimal(str(value))
+    else:
+        raise TypeError(f"unsupported coupon type: {type(value).__name__}")
+
+    if num < 0:
+        raise ValueError(f"negative coupon: {value!r}")
+    if num > Decimal("100"):
+        raise ValueError(f"coupon {value!r} > 100%; likely misencoded")
+    if num != 0 and num < Decimal("0.5") and not allow_below_half_pct:
+        raise ValueError(
+            f"coupon {value!r} looks like a fraction (e.g. 0.045 meaning "
+            "4.5%), not a percentage. The schema requires percentage form: "
+            "use 4.5 not 0.045. If this is a genuine sub-0.5% coupon, pass "
+            "allow_below_half_pct=True."
+        )
+
+    if num == num.to_integral_value():
+        return int(num)
+    return float(num)
+
+
+# ---- Loose frequency parsing ----
+
+def normalize_frequency(value: object) -> int:
+    """Resolve a frequency input to one of {0, 1, 2, 4, 12}.
+
+    Accepts integers, numeric strings, and common shorthands
+    (``S``/``A``/``Q``/``M``/``Z``, ``Semi-Annual``, ``Quarterly``, etc.).
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"booleans are not frequencies: {value!r}")
+    if isinstance(value, int):
+        if value not in (0, 1, 2, 4, 12):
+            raise ValueError(
+                f"frequency {value!r} is not one of 0, 1, 2, 4, 12"
+            )
+        return value
+    if isinstance(value, str):
+        key = _synonym_key(value)
+        if not key:
+            raise ValueError("empty frequency string")
+        if key in _FREQUENCY_SYNONYMS:
+            return _FREQUENCY_SYNONYMS[key]
+        raise ValueError(
+            f"frequency {value!r} is not a recognised value or synonym; "
+            "expected one of 0, 1, 2, 4, 12 or S/A/Q/M/Z."
+        )
+    raise TypeError(f"unsupported frequency type: {type(value).__name__}")
+
+
 # ---- Disambiguators ----
 
 def _is_canonical(value: str | None, enum_set: frozenset[str]) -> bool:
     return isinstance(value, str) and value in enum_set
+
+
+def _through_synonyms(
+    value: str | None,
+    enum_set: frozenset[str],
+    synonyms: dict[str, str],
+    ambiguous: dict[str, tuple[str, ...]] | None,
+) -> tuple[str | None, tuple[str, ...] | None]:
+    """Return ``(canonical, ambiguous_candidates)``.
+
+    - Canonical raw → ``(value, None)``
+    - Synonym match → ``(canonical, None)``
+    - Ambiguous shorthand → ``(None, candidates)``
+    - None / unrecognised → ``(None, None)``
+    """
+    if value is None or not isinstance(value, str):
+        return None, None
+    if value in enum_set:
+        return value, None
+    key = _synonym_key(value)
+    # Mixed-case spellings of a canonical form (e.g. "Preceding",
+    # "us_settlement") are accepted via this path before consulting the
+    # synonym table.
+    canonical_match = key.replace(" ", "_")
+    if canonical_match in enum_set:
+        return canonical_match, None
+    if key in synonyms:
+        return synonyms[key], None
+    if ambiguous and key in ambiguous:
+        return None, ambiguous[key]
+    return None, None
 
 
 def disambiguate_day_count(
@@ -254,24 +578,35 @@ def _disambiguate_simple_enum(
     raw: str | None,
     enum_set: frozenset[str],
     default_value: str,
-    observations: dict[str, str] | None = None,
+    synonyms: dict[str, str],
+    ambiguous_hints: dict[str, tuple[str, ...]] | None,
+    observations: dict[str, str] | None,
 ) -> FieldResolution:
-    """Used for calendar and BDC where there is no equivalent of '30/360'
-    ambiguity — the field is either canonical, defaulted, or unknown.
-    """
+    """Used for calendar and BDC. The raw value is accepted if it is already
+    canonical, mapped via the synonym table, or absent (in which case the
+    canonical default applies). Ambiguous shorthands (e.g. bare ``"US"``)
+    are left unresolved with a hint."""
     observations = dict(observations or {})
     reasoning: list[str] = []
-    sources_used: list[str] = []
 
-    if _is_canonical(raw, enum_set):
-        canonical_obs = [(s, v) for s, v in observations.items() if _is_canonical(v, enum_set)]
-        agree = sum(1 for _, v in canonical_obs if v == raw)
+    canonical, candidates = _through_synonyms(raw, enum_set, synonyms, ambiguous_hints)
+
+    if canonical is not None:
+        if raw != canonical:
+            reasoning.append(f"primary value {raw!r} mapped via synonym to {canonical!r}")
+        canonical_obs: list[tuple[str, str]] = []
+        for src, val in observations.items():
+            obs_can, _ = _through_synonyms(val, enum_set, synonyms, ambiguous_hints)
+            if obs_can is not None:
+                canonical_obs.append((src, obs_can))
+        agree = sum(1 for _, v in canonical_obs if v == canonical)
         if agree >= 2:
-            reasoning.append(f"primary value {raw!r} confirmed by {agree} observation(s)")
-            sources_used = ["primary"] + [s for s, v in canonical_obs if v == raw]
-            return FieldResolution(raw, "high", "explicit", reasoning, sources_used)
-        reasoning.append(f"primary value {raw!r} accepted (single source)")
-        return FieldResolution(raw, "low", "explicit", reasoning, ["primary"])
+            reasoning.append(f"confirmed by {agree} observation(s)")
+            sources_used = ["primary"] + [s for s, v in canonical_obs if v == canonical]
+            return FieldResolution(canonical, "high", "explicit", reasoning, sources_used)
+        if raw == canonical:
+            reasoning.append(f"primary value {raw!r} accepted (single source)")
+        return FieldResolution(canonical, "low", "explicit", reasoning, ["primary"])
 
     if raw is None:
         reasoning.append(
@@ -279,9 +614,16 @@ def _disambiguate_simple_enum(
         )
         return FieldResolution(default_value, "high", "default", reasoning, [])
 
+    if candidates is not None:
+        reasoning.append(
+            f"primary value {raw!r} is ambiguous; possible canonical forms: "
+            f"{', '.join(candidates)}"
+        )
+        return FieldResolution(None, "unresolved", "unknown", reasoning, [])
+
     reasoning.append(
-        f"primary value {raw!r} is not a recognised canonical enum; "
-        f"left unresolved (consider sourcing from prospectus)"
+        f"primary value {raw!r} is not a recognised canonical enum or known synonym; "
+        "left unresolved (consider sourcing from prospectus)"
     )
     return FieldResolution(None, "unresolved", "unknown", reasoning, [])
 
@@ -291,7 +633,10 @@ def disambiguate_calendar(
     isin: str,
     observations: dict[str, str] | None = None,
 ) -> FieldResolution:
-    return _disambiguate_simple_enum(raw, CALENDAR_ENUM, DEFAULT_CALENDAR, observations)
+    return _disambiguate_simple_enum(
+        raw, CALENDAR_ENUM, DEFAULT_CALENDAR,
+        _CALENDAR_SYNONYMS, _AMBIGUOUS_CALENDAR_HINTS, observations,
+    )
 
 
 def disambiguate_bdc(
@@ -299,7 +644,10 @@ def disambiguate_bdc(
     isin: str,
     observations: dict[str, str] | None = None,
 ) -> FieldResolution:
-    return _disambiguate_simple_enum(raw, BDC_ENUM, DEFAULT_BDC, observations)
+    return _disambiguate_simple_enum(
+        raw, BDC_ENUM, DEFAULT_BDC,
+        _BDC_SYNONYMS, None, observations,
+    )
 
 
 # ---- Top-level adapter ----
@@ -326,6 +674,7 @@ def normalize_to_published_record(
     sources: list[SourceReference],
     observations: dict[str, dict[str, str]] | None = None,
     prospectus_text: str | None = None,
+    allow_below_half_pct_coupon: bool = False,
 ) -> PublishedRecord:
     """Build a wire-format ``PublishedRecord`` from a raw bond_identity-shaped
     row plus optional multi-source observations.
@@ -377,12 +726,20 @@ def normalize_to_published_record(
     field_status: dict[str, FieldStatus] = {}
     where_to_find: WhereToFind = {}
 
-    # Mandatory pass-throughs (let canonicalize_record validate types/format).
+    # Mandatory fields, normalised through the loose-input helpers so that
+    # ambiguous formats (Excel serials, percent-vs-fraction coupons, "Semi"
+    # frequency, etc.) are caught here instead of corrupting the hash.
     for field_name in ("coupon", "maturity_date", "frequency"):
         if field_name not in raw_row or raw_row[field_name] is None:
             raise ValueError(f"raw_row is missing mandatory field {field_name!r}")
-        canonical_record[field_name] = raw_row[field_name]
-        field_status[field_name] = "explicit"
+    canonical_record["coupon"] = normalize_coupon_value(
+        raw_row["coupon"], allow_below_half_pct=allow_below_half_pct_coupon,
+    )
+    field_status["coupon"] = "explicit"
+    canonical_record["maturity_date"] = parse_loose_date(raw_row["maturity_date"])
+    field_status["maturity_date"] = "explicit"
+    canonical_record["frequency"] = normalize_frequency(raw_row["frequency"])
+    field_status["frequency"] = "explicit"
 
     # day_count via the resolver.
     if day_count_res.canonical is not None:
@@ -395,12 +752,12 @@ def normalize_to_published_record(
              "note": "; ".join(day_count_res.reasoning)}
         ]
 
-    # Optional dates: pass through if present, otherwise mark as derived
+    # Optional dates: parse loosely if present; otherwise mark as derived
     # (apply_derivations will fill them at hash time).
     for field_name in ("issue_date", "first_coupon_date"):
         v = raw_row.get(field_name)
         if v is not None:
-            canonical_record[field_name] = v
+            canonical_record[field_name] = parse_loose_date(v)
             field_status[field_name] = "explicit"
         else:
             field_status[field_name] = "derived"
@@ -454,5 +811,8 @@ __all__ = [
     "disambiguate_day_count",
     "disambiguate_calendar",
     "disambiguate_bdc",
+    "normalize_coupon_value",
+    "normalize_frequency",
     "normalize_to_published_record",
+    "parse_loose_date",
 ]
