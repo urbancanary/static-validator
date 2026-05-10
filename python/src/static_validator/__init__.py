@@ -2,6 +2,7 @@
 
 from .adapter import (
     FieldResolution,
+    classify_day_count_phrase,
     disambiguate_bdc,
     disambiguate_calendar,
     disambiguate_day_count,
@@ -9,6 +10,15 @@ from .adapter import (
     normalize_frequency,
     normalize_to_published_record,
     parse_loose_date,
+)
+from .gemini_extractor import (
+    AmortizationExtraction,
+    CallExtraction,
+    FieldExtraction,
+    ProspectusExtraction,
+    VerificationResult,
+    quote_in_pdf_text,
+    verify_extraction,
 )
 from .canonicalize import (
     BDC_ENUM,
@@ -36,7 +46,13 @@ __all__ = [
     "compute_all_tiers",
     "ValidationResult",
     "validate_bond_static",
+    "AmortizationExtraction",
+    "CallExtraction",
+    "FieldExtraction",
     "FieldResolution",
+    "ProspectusExtraction",
+    "VerificationResult",
+    "classify_day_count_phrase",
     "disambiguate_bdc",
     "disambiguate_calendar",
     "disambiguate_day_count",
@@ -44,4 +60,6 @@ __all__ = [
     "normalize_frequency",
     "normalize_to_published_record",
     "parse_loose_date",
+    "quote_in_pdf_text",
+    "verify_extraction",
 ]

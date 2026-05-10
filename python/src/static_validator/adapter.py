@@ -105,7 +105,7 @@ _PROSPECTUS_DAY_COUNT_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
      "prospectus uses 'Eurobond Basis' phrasing"),
     (re.compile(r"30/360\s*\(\s*bond\s+basis\s*\)"), "BOND_BASIS_30_360",
      "prospectus pinpoints '30/360 (Bond Basis)'"),
-    (re.compile(r"360-day\s+year\s+consisting\s+of\s+twelve\s+30-day\s+months"),
+    (re.compile(r"360-day\s+year(?:\s+consisting)?\s+of\s+twelve\s+30-day\s+months"),
      "BOND_BASIS_30_360",
      "prospectus uses canonical BOND_BASIS phrasing"),
     (re.compile(r"act/act\s*\(\s*icma\s*\)"), "ACT_ACT_ICMA",
@@ -125,6 +125,23 @@ def _prospectus_match(prospectus_text: str) -> tuple[str, str] | None:
         if pattern.search(lower):
             return enum_value, why
     return None
+
+
+def classify_day_count_phrase(text: str) -> str | None:
+    """Public, deterministic phrase → ``DAY_COUNT_ENUM`` classifier.
+
+    Used by the prospectus-extraction verifier to *re-derive* the
+    convention from a verified quote, deliberately discarding whatever
+    classification an upstream LLM emitted. This is the seam that stops
+    BBG-correlated training bias from riding through to the canonical
+    record (see SCHEMA.md trust model).
+
+    Returns ``None`` if no canonical phrase pattern matched — the caller
+    should treat that as "prospectus quoted but silent on sub-variant"
+    and route to contested-field handling, not pick a default.
+    """
+    match = _prospectus_match(text)
+    return match[0] if match is not None else None
 
 
 # ---- Calendar synonyms ----
@@ -853,6 +870,7 @@ def normalize_to_published_record(
 
 __all__ = [
     "FieldResolution",
+    "classify_day_count_phrase",
     "disambiguate_day_count",
     "disambiguate_calendar",
     "disambiguate_bdc",
