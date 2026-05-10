@@ -20,6 +20,68 @@ _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # after the decimal point, no leading +.
 _MAX_DECIMAL_PLACES = 6
 
+# Canonical enums per SCHEMA.md §3. Inputs MUST match one of these strings
+# byte-for-byte; ambiguous shorthands (e.g. "30/360", "ACT/ACT") are rejected
+# with a hint pointing at the disambiguated forms.
+DAY_COUNT_ENUM = frozenset({
+    "BOND_BASIS_30_360",
+    "ISMA_30_360",
+    "ISDA_30E_360",
+    "ACT_ACT_ICMA",
+    "ACT_ACT_ISDA",
+    "ACT_360",
+    "ACT_365_FIXED",
+    "ACT_365_25",
+})
+
+CALENDAR_ENUM = frozenset({
+    "NULL_CALENDAR",
+    "WEEKENDS_ONLY",
+    "US_GOVERNMENT",
+    "US_SETTLEMENT",
+    "TARGET",
+    "UK_SETTLEMENT",
+})
+
+BDC_ENUM = frozenset({
+    "UNADJUSTED",
+    "FOLLOWING",
+    "MODIFIED_FOLLOWING",
+    "PRECEDING",
+    "MODIFIED_PRECEDING",
+})
+
+# Known ambiguous vendor shorthands → the disambiguated forms a caller has
+# to choose between. The validator REFUSES to guess; the caller (or a
+# separate normalization adapter) must commit to one.
+_AMBIGUOUS_DAY_COUNT_HINTS: dict[str, tuple[str, ...]] = {
+    "30/360": ("BOND_BASIS_30_360", "ISMA_30_360", "ISDA_30E_360"),
+    "30E/360": ("ISMA_30_360", "ISDA_30E_360"),
+    "ACT/ACT": ("ACT_ACT_ICMA", "ACT_ACT_ISDA"),
+    "ACTUAL/ACTUAL": ("ACT_ACT_ICMA", "ACT_ACT_ISDA"),
+    "ACT/360": ("ACT_360",),
+    "ACT/365": ("ACT_365_FIXED", "ACT_365_25"),
+    "ACTUAL/365": ("ACT_365_FIXED", "ACT_365_25"),
+}
+
+
+def _validate_enum(field: str, value: str, allowed: frozenset[str]) -> None:
+    if value in allowed:
+        return
+    upper = value.upper().strip()
+    if field == "day_count" and upper in _AMBIGUOUS_DAY_COUNT_HINTS:
+        candidates = _AMBIGUOUS_DAY_COUNT_HINTS[upper]
+        raise ValueError(
+            f"day_count {value!r} is ambiguous; the schema requires a "
+            f"disambiguated form. Possible canonical values: "
+            f"{', '.join(candidates)}. Resolve via prospectus or "
+            f"multi-source consensus before hashing — see SCHEMA.md §3."
+        )
+    raise ValueError(
+        f"{field}={value!r} is not a canonical enum value. "
+        f"Allowed: {sorted(allowed)} (see SCHEMA.md §3)."
+    )
+
 
 def _validate_isin_checksum(isin: str) -> bool:
     """Luhn-style ISO 6166 checksum validation."""
@@ -184,7 +246,9 @@ def canonicalize_record(record: dict[str, Any]) -> dict[str, Any]:
     out["frequency"] = int(record["frequency"])
     if "day_count" not in record:
         raise ValueError("day_count is mandatory")
-    out["day_count"] = _normalize_string(record["day_count"])
+    day_count = _normalize_string(record["day_count"])
+    _validate_enum("day_count", day_count, DAY_COUNT_ENUM)
+    out["day_count"] = day_count
 
     # Optional fields — pass through if present, derivations are applied
     # upstream by the caller.
@@ -193,9 +257,13 @@ def canonicalize_record(record: dict[str, Any]) -> dict[str, Any]:
     if "first_coupon_date" in record:
         out["first_coupon_date"] = _normalize_date(record["first_coupon_date"])
     if "calendar" in record:
-        out["calendar"] = _normalize_string(record["calendar"])
+        calendar = _normalize_string(record["calendar"])
+        _validate_enum("calendar", calendar, CALENDAR_ENUM)
+        out["calendar"] = calendar
     if "business_day_convention" in record:
-        out["business_day_convention"] = _normalize_string(record["business_day_convention"])
+        bdc = _normalize_string(record["business_day_convention"])
+        _validate_enum("business_day_convention", bdc, BDC_ENUM)
+        out["business_day_convention"] = bdc
 
     return out
 

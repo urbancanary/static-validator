@@ -137,6 +137,94 @@ class TestCanonicalizeRecord:
             )
 
 
+class TestEnumEnforcement:
+    """Stop ambiguous vendor strings from silently being treated as canonical.
+
+    The WNBF/Panama correction case (memory 260) was driven by exactly this:
+    a vendor's '30/360' was treated as equivalent to BOND_BASIS_30_360 by an
+    eyeball-comparison upstream, when it actually meant ISMA_30_360 — accrued
+    differed by a day, and we only caught it by reading the prospectus.
+    """
+
+    BASE = {
+        "isin": "US698299BL70",
+        "coupon": 3.87,
+        "maturity_date": "2060-07-23",
+        "frequency": 2,
+        "day_count": "BOND_BASIS_30_360",
+    }
+
+    def test_ambiguous_30_360_rejected_with_hint(self):
+        rec = dict(self.BASE, day_count="30/360")
+        with pytest.raises(ValueError, match="ambiguous"):
+            canonicalize_record(rec)
+        # The error must list the disambiguated alternatives.
+        try:
+            canonicalize_record(rec)
+        except ValueError as exc:
+            msg = str(exc)
+        assert "BOND_BASIS_30_360" in msg
+        assert "ISMA_30_360" in msg
+        assert "ISDA_30E_360" in msg
+
+    def test_ambiguous_act_act_rejected(self):
+        rec = dict(self.BASE, day_count="ACT/ACT")
+        with pytest.raises(ValueError, match="ambiguous"):
+            canonicalize_record(rec)
+
+    @pytest.mark.parametrize(
+        "value",
+        ["30/360", "30E/360", "ACT/ACT", "ACTUAL/ACTUAL", "ACT/365", "ACTUAL/365"],
+    )
+    def test_known_ambiguous_forms_all_rejected(self, value):
+        rec = dict(self.BASE, day_count=value)
+        with pytest.raises(ValueError, match="ambiguous"):
+            canonicalize_record(rec)
+
+    def test_unknown_day_count_rejected(self):
+        rec = dict(self.BASE, day_count="SOMETHING_MADE_UP")
+        with pytest.raises(ValueError, match="not a canonical enum"):
+            canonicalize_record(rec)
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "BOND_BASIS_30_360",
+            "ISMA_30_360",
+            "ISDA_30E_360",
+            "ACT_ACT_ICMA",
+            "ACT_ACT_ISDA",
+            "ACT_360",
+            "ACT_365_FIXED",
+            "ACT_365_25",
+        ],
+    )
+    def test_canonical_day_count_accepted(self, value):
+        rec = dict(self.BASE, day_count=value)
+        out = canonicalize_record(rec)
+        assert out["day_count"] == value
+
+    def test_invalid_calendar_rejected(self):
+        rec = dict(self.BASE, calendar="NYC")
+        with pytest.raises(ValueError, match="not a canonical enum"):
+            canonicalize_record(rec)
+
+    def test_canonical_calendar_accepted(self):
+        rec = dict(self.BASE, calendar="US_GOVERNMENT")
+        out = canonicalize_record(rec)
+        assert out["calendar"] == "US_GOVERNMENT"
+
+    def test_invalid_bdc_rejected(self):
+        rec = dict(self.BASE, business_day_convention="NEXT")
+        with pytest.raises(ValueError, match="not a canonical enum"):
+            canonicalize_record(rec)
+
+    def test_canonical_bdc_accepted(self):
+        rec = dict(self.BASE, business_day_convention="MODIFIED_FOLLOWING")
+        out = canonicalize_record(rec)
+        assert out["business_day_convention"] == "MODIFIED_FOLLOWING"
+
+
 class TestCanonicalizeJson:
     def test_byte_identical_for_equivalent_inputs(self):
         # Same logical input expressed differently must produce identical JSON.
