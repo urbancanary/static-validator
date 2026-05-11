@@ -16,6 +16,8 @@ from static_validator.adapter import (
     normalize_frequency,
     normalize_to_published_record,
     parse_loose_date,
+    parse_vendor_day_count_label,
+    parse_vendor_frequency,
 )
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -570,6 +572,62 @@ class TestNormalizeToPublishedRecord:
         assert record["canonical_field_status"]["day_count"] == "explicit"
         assert record["tier_hashes"]["calc_hash_min"].startswith("sha256:")
         assert "day_count" not in record.get("where_to_find", {})
+
+
+# -------- vendor-label parsers --------
+
+class TestParseVendorDayCountLabel:
+    @pytest.mark.parametrize(
+        "label,expected",
+        [
+            ("30/360 (Bond Basis)", "BOND_BASIS_30_360"),
+            ("30/360 BOND BASIS", "BOND_BASIS_30_360"),
+            ("Actual/Actual (ISDA)", "ACT_ACT_ISDA"),
+            ("Actual/Actual (ICMA)", "ACT_ACT_ICMA"),
+            ("Actual/365 (Fixed)", "ACT_365_FIXED"),
+            ("Actual/360", "ACT_360"),
+            ("30E/360 (Eurobond Basis)", "ISDA_30E_360"),
+            ("30E/360 (ISMA)", "ISMA_30_360"),
+            ("BOND_BASIS_30_360", "BOND_BASIS_30_360"),  # passthrough
+        ],
+    )
+    def test_unambiguous_labels_translate(self, label, expected):
+        assert parse_vendor_day_count_label(label) == expected
+
+    @pytest.mark.parametrize("label", ["30/360", "30E/360", "ACT/ACT"])
+    def test_ambiguous_labels_return_none(self, label):
+        # These need disambiguate_day_count + multi-source to resolve.
+        assert parse_vendor_day_count_label(label) is None
+
+    def test_unknown_label_returns_none(self):
+        assert parse_vendor_day_count_label("MADE_UP") is None
+
+    def test_none_passthrough(self):
+        assert parse_vendor_day_count_label(None) is None
+
+
+class TestParseVendorFrequency:
+    @pytest.mark.parametrize(
+        "label,expected",
+        [
+            ("Semiannual", 2),
+            ("SEMIANNUAL", 2),
+            ("Semi-Annual", 2),
+            ("Annual", 1),
+            ("Quarterly", 4),
+            ("Monthly", 12),
+            ("ZeroCoupon", 0),
+            ("2", 2),
+            (2, 2),
+            ("12", 12),
+        ],
+    )
+    def test_recognised_labels(self, label, expected):
+        assert parse_vendor_frequency(label) == expected
+
+    @pytest.mark.parametrize("label", ["Weekly", "3", 3, "abc", None])
+    def test_unrecognised_returns_none(self, label):
+        assert parse_vendor_frequency(label) is None
 
 
 # -------- JSON Schema conformance --------

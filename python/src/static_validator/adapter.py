@@ -72,6 +72,112 @@ class FieldResolution:
 
 # ---- ISIN-prefix hint table (informational signal only) ----
 
+# ---- Vendor-label translation (unambiguous non-canonical forms) ----
+
+# Many vendors emit unambiguous labels that aren't in our canonical enum form
+# (e.g. "30/360 (Bond Basis)"). These translations are 1:1 — different from
+# the ambiguous shorthands in canonicalize._AMBIGUOUS_DAY_COUNT_HINTS, which
+# require disambiguation. Match keys are uppercased and stripped.
+_VENDOR_DAY_COUNT_LABELS: dict[str, str] = {
+    # 30/360 family — explicit
+    "30/360 (BOND BASIS)": "BOND_BASIS_30_360",
+    "30/360 BOND BASIS": "BOND_BASIS_30_360",
+    "30/360 BB": "BOND_BASIS_30_360",
+    "30/360 (BB)": "BOND_BASIS_30_360",
+    "30/360 (US)": "BOND_BASIS_30_360",
+    "30/360 (NASD)": "BOND_BASIS_30_360",
+    # 30E/360 family — explicit ISMA / ISDA
+    "30E/360 (ISMA)": "ISMA_30_360",
+    "30E/360 ISMA": "ISMA_30_360",
+    "30E/360 (ISDA)": "ISDA_30E_360",
+    "30E/360 ISDA": "ISDA_30E_360",
+    "30E/360 (EUROBOND BASIS)": "ISDA_30E_360",
+    "30E/360 EUROBOND BASIS": "ISDA_30E_360",
+    "EUROBOND BASIS": "ISDA_30E_360",
+    # ACT/ACT family — explicit ICMA / ISDA
+    "ACT/ACT (ICMA)": "ACT_ACT_ICMA",
+    "ACT/ACT ICMA": "ACT_ACT_ICMA",
+    "ACTUAL/ACTUAL (ICMA)": "ACT_ACT_ICMA",
+    "ACTUAL/ACTUAL ICMA": "ACT_ACT_ICMA",
+    "ACT/ACT (ISDA)": "ACT_ACT_ISDA",
+    "ACT/ACT ISDA": "ACT_ACT_ISDA",
+    "ACTUAL/ACTUAL (ISDA)": "ACT_ACT_ISDA",
+    "ACTUAL/ACTUAL ISDA": "ACT_ACT_ISDA",
+    "ACTACT": "ACT_ACT_ISDA",  # common shorthand for the ISDA variant
+    # ACT/360
+    "ACT/360": "ACT_360",
+    "ACTUAL/360": "ACT_360",
+    # ACT/365 — Fixed is the dominant variant in cash bonds
+    "ACT/365 FIXED": "ACT_365_FIXED",
+    "ACT/365 (FIXED)": "ACT_365_FIXED",
+    "ACTUAL/365 (FIXED)": "ACT_365_FIXED",
+    "ACTUAL/365 FIXED": "ACT_365_FIXED",
+    "ACT/365F": "ACT_365_FIXED",
+    "ACT/365.25": "ACT_365_25",
+    "ACTUAL/365.25": "ACT_365_25",
+}
+
+
+def parse_vendor_day_count_label(label: str | None) -> str | None:
+    """Translate a vendor-supplied day_count label to the canonical enum.
+
+    Returns the canonical enum if the label is unambiguous, None if the label
+    is ambiguous, missing, or unknown. Unambiguous means the label itself
+    pinpoints exactly one canonical form (e.g. "30/360 (Bond Basis)" — the
+    parenthetical disambiguates).
+
+    Truly ambiguous shorthands like "30/360" alone always return None; use
+    disambiguate_day_count with multi-source observations or prospectus_text
+    to resolve those.
+    """
+    if not isinstance(label, str):
+        return None
+    key = label.upper().strip()
+    if key in _VENDOR_DAY_COUNT_LABELS:
+        return _VENDOR_DAY_COUNT_LABELS[key]
+    if key in DAY_COUNT_ENUM:
+        return key  # already canonical
+    return None
+
+
+# Vendor-label-to-frequency translation. Numeric strings are accepted too.
+_VENDOR_FREQUENCY_LABELS: dict[str, int] = {
+    "ANNUAL": 1,
+    "ANNUALLY": 1,
+    "SEMIANNUAL": 2,
+    "SEMI-ANNUAL": 2,
+    "SEMIANNUALLY": 2,
+    "QUARTERLY": 4,
+    "MONTHLY": 12,
+    "ZEROCOUPON": 0,
+    "ZERO": 0,
+    "ZERO-COUPON": 0,
+    "ZERO COUPON": 0,
+}
+
+
+def parse_vendor_frequency(label: object) -> int | None:
+    """Translate a vendor-supplied frequency label or numeric string to the
+    canonical integer (1, 2, 4, 12, 0).
+
+    Returns None if the value is unrecognised. Use this in pipelines that
+    consume vendor strings; the adapter itself expects an int.
+    """
+    if isinstance(label, int) and not isinstance(label, bool):
+        if label in (0, 1, 2, 4, 12):
+            return label
+        return None
+    if isinstance(label, str):
+        stripped = label.strip()
+        if stripped.isdigit():
+            n = int(stripped)
+            return n if n in (0, 1, 2, 4, 12) else None
+        return _VENDOR_FREQUENCY_LABELS.get(stripped.upper())
+    return None
+
+
+# ---- ISIN-prefix hint table (informational signal only) ----
+
 _DAY_COUNT_HINTS_BY_PREFIX: dict[str, str] = {
     # US-prefix: many USD sovereign / agency / corporate issues use BOND_BASIS.
     # Heuristic only — lots of US-prefix bonds are ACT_ACT_ISDA (treasuries).
@@ -878,4 +984,6 @@ __all__ = [
     "normalize_frequency",
     "normalize_to_published_record",
     "parse_loose_date",
+    "parse_vendor_day_count_label",
+    "parse_vendor_frequency",
 ]

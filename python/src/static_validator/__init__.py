@@ -10,6 +10,8 @@ from .adapter import (
     normalize_frequency,
     normalize_to_published_record,
     parse_loose_date,
+    parse_vendor_day_count_label,
+    parse_vendor_frequency,
 )
 from .gemini_extractor import (
     AmortizationExtraction,
@@ -60,6 +62,8 @@ __all__ = [
     "normalize_frequency",
     "normalize_to_published_record",
     "parse_loose_date",
+    "parse_vendor_day_count_label",
+    "parse_vendor_frequency",
     "quote_in_pdf_text",
     "verify_extraction",
 ]
