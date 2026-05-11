@@ -1,0 +1,12 @@
+# Pitch deliverables that embed prospectus page-crops — keep local-only.
+# Issuer holds copyright on the underlying prospectus text/images even
+# when the doc is publicly filed at the SEC.
+*.pptx
+
+# PDF sources (cache only — re-downloadable from SEC EDGAR / issuer IR).
+*.pdf
+
+# Image crops are stored in Supabase Storage (private bucket).
+# If anyone runs the harness locally and produces /tmp/evidence/, don't
+# accidentally commit those either.
+evidence/
