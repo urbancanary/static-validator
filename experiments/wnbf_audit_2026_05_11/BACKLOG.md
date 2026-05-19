@@ -278,3 +278,219 @@ The customer publishes only a per-field MATCH/MISMATCH signal, never the BBG val
 
 **Effort:** spec ~1 hour; SDK extension 2-3 hours; documentation update. None of it requires server changes today.
 
+
+---
+
+## 14. HMAC-protected hash tier — staged: single secret first, per-client when scale warrants (opened 2026-05-11)
+
+**Why this matters first:** Bond static is low-entropy. `calc_hash_min` covers (coupon, maturity_date, frequency, day_count) ≈ 10^10 plausible tuples. A modern GPU does ~10^10 SHA-256/sec, so anyone with the public hash database can brute-force the canonical record for any ISIN in under a second. Plain SHA-256 hashes today are effectively a publishing of the canonical record. The "your data never leaves your network" claim is currently a half-truth.
+
+**The headline capability HMAC unlocks: per-field hashes published safely.** Plain SHA-256 per-field is dangerous — `day_count` has 8 values (8 hashes to brute-force), `frequency` has 5, `coupon` has ~1,500 at bp precision. Publishing plain per-field hashes essentially publishes the field values. With HMAC, per-field hashing becomes safe AND enables **surgical disagreement reporting on the client side** — client SDK can tell the user "your `coupon` disagrees with canonical; everything else matches" without anyone seeing the values. Today's `bond_static_discrepancies` table becomes a client-side artifact, computed on their Railway against their data, with us never seeing the diff.
+
+Three states the client SDK can report per field:
+- ✓ MATCH — your hash equals canonical hash
+- ✗ DISAGREE — your hash differs from canonical hash (client knows to investigate that field; canonical value never exposed)
+- ? MISSING_LOCAL — canonical has a hash for this field but you didn't provide a value (consider adding; e.g. call_date the client never imported)
+
+This is a stronger pitch than "we made brute-force harder" — it's "we made fine-grained drift detection POSSIBLE while keeping your data on your network".
+
+**Fix:** swap SHA-256 for `HMAC-SHA256(secret, canonical_json)` for both tier hashes AND per-field hashes. Without the secret, brute force is infeasible.
+
+**Deployment-topology context (re-confirmed 2026-05-11):**
+The static-validator code is open-source and customers deploy it on **their own Railway / cloud / on-prem**. Their bond data only ever exists on their box. The only egress is `GET /hash/{isin}` to our public read API. The HMAC secret therefore has to be retrievable by the *customer's* deployed instance — it lives in their process memory after fetch from auth-mcp. We do not see their data; we do see when they fetch the secret.
+
+**Threat model in this topology:**
+- T-A: anonymous scraper of the public hash database brute-forces. → HMAC kills it, regardless of single or per-client secret.
+- T-B: a fake "customer" registers, fetches the secret, brute-forces the public DB. → Single secret = all customers' hashes now decoded; per-client = only that fake account's slice.
+- T-C: a legitimate customer's Railway is compromised, attacker pulls the secret from env vars. → Same blast-radius distinction.
+
+**Staging plan:**
+
+| Stage | Architecture | When |
+|---|---|---|
+| **v0.2 — Single shared secret** | One `STATIC_VALIDATOR_SECRET` in auth-mcp; client SDK fetches at init; HMAC over canonical JSON. One public hash database. | Ship now-ish. Fixes T-A immediately. For early design partners (5–20 contracted customers), T-B / T-C risk is manageable and the operational simplicity is a real benefit. |
+| **v0.3 — Per-client secrets** | Random `SK_i` per `X-Client-ID`, generated on customer onboarding, stored in auth-mcp keyed by client_id. One hash database per client (`/hash/{client_id}/{isin}`). | When customer count reaches ~50, OR when any single customer is high-value enough that their compromise must not cascade. |
+
+Per-client generation: option (B) of three considered — random 32-byte per client on onboarding, stored in auth-mcp by `X-Client-ID`. No master secret to protect. Rejected options: pre-allocating a pool of 1000 keys (wasteful, no benefit); KDF-from-master (master leak is catastrophic, needs HSM).
+
+**Spec changes (v0.2):**
+- `schema/published_record.schema.json`: add `calc_hash_*_hmac` fields alongside existing `calc_hash_*`. Both populated; client picks based on whether it has the secret. Schema version bump 0.1 → 0.2.
+- `python/src/static_validator/hashes.py`: add `compute_hmac_tier_hash(record, tier, secret)`.
+- `python/src/static_validator/validate.py`: accept optional `secret` param. With secret → uses HMAC tiers. Without → falls back to plain SHA (still useful for the "anyone can play" public demo, with documented caveat about brute-force).
+- Hash format prefix: `sha256:<hex>` for plain; `hmac-sha256:<hex>` for HMAC. Mutually distinguishable.
+- README: document the two modes and when to use which.
+
+**Spec changes (v0.3):**
+- Read API gains `/hash/{client_id}/{isin}` path (or `X-Client-ID` header on `/hash/{isin}`).
+- Hash database becomes partitioned per client.
+- Onboarding flow generates `SK_i` and writes to auth-mcp.
+
+**Trade-off explicit:** v0.2 keeps the free "anyone can validate without auth" demo *with* a documented limitation (brute-forceable). v0.2-with-secret keeps the "your data never leaves your network" promise honestly. v0.3 adds defense-in-depth blast-radius bounds.
+
+**Effort:**
+- v0.2: ~30 min for schema + SDK changes + tests + README update.
+- v0.3: ~2-3 hours for the per-client database + onboarding flow + auth-mcp integration.
+
+**Why this matters:** without v0.2, the validator's headline privacy claim is incorrect, and the pitch breaks under a competent attacker. Without v0.3, scale is bounded by the trustworthiness of every individual customer.
+
+---
+
+## 15. Define canonical precision for amortization percentages in the spec (opened 2026-05-12)
+
+**What:** The CBonds roleplay surfaced a "false-positive" disagreement on Panama 2060's final installment: CBonds reports redemptions as 66667 / 66667 / 66666 out of 200000 nominal = `33.3335 / 33.3335 / 33.3330%`; the prospectus quotes `33.33 / 33.33 / 33.34%`. Both sum to 100% and pay identical cash, but the rounding lands differently. Without a canonical precision, the hashes disagree even though the economics are equivalent.
+
+**Fix:** define in `SCHEMA.md` §canonical-rules that amortization percentages are rounded to **2 decimal places** before hashing. Document that "33.3335 ≡ 33.33 ≡ 33.33000 at canonical precision". Same rule for any other quoted-percentage field (make-whole spread bps stays integer; coupon stays to whatever precision the prospectus quotes — usually 3 dp).
+
+**Where to apply:**
+- `python/src/static_validator/canonicalize.py` — pre-hash rounding hook for `amortization_schedule[*].pct`.
+- Doc note in `schema/published_record.schema.json`.
+- Updated test fixture covering the Panama 2060 case (rounding-induced quirk; should canonicalise to MATCH, not DISAGREE).
+
+**Why it matters:** the validator's value depends on its disagreements being *meaningful*. A precision-quirk false-positive on every amortizing bond degrades the signal. 2-dp matches the prospectus's reporting standard for bond installments and is the natural Schelling point.
+
+**Effort:** ~15 minutes — single function + schema doc + one test.
+
+**Open question:** should the rule apply to currency values (e.g. cashflow redemption amounts as integers) the same way? Probably yes — round to 2 dp on percentage hashes; round to whole cents on currency hashes. Worth thinking through once for all numeric fields in the spec rather than piecemeal.
+
+
+---
+
+## 19. Fill the daily-write gap on `bond_rating_history` (opened 2026-05-15)
+
+**Symptom:** `bond_rating_history` has only 83,148 rows across 37,543 ISINs — ~2.2 rows per ISIN, despite rating-mcp running daily. Saudi 2060 has exactly one `effective_date` (2026-04-29) for each of the four agencies, even though `bond_reference.instrument_rating_date` is today (2026-05-15). The table is snapshot-on-change at best, snapshot-on-bulk-load at worst.
+
+**Impact:** the inspector cannot answer "what was the rating last Tuesday?" because the history isn't actually there — only the current `bond_reference` row plus a thin reference back to one historical point. Time-travel queries silently return whatever record happens to be present, which may be weeks or months stale.
+
+**Decision required:**
+- **Option A — full daily snapshot:** rating-mcp writes one row per (isin, agency) per day, regardless of change. Storage cost: 37,543 ISINs × 4 agencies × 365 days ≈ 55M rows/year. Manageable but not trivial — needs an index on `(isin, effective_date)` and probably partitioning by year.
+- **Option B — strict change-detection write:** rating-mcp diffs against last-known value per (isin, agency) and writes only on change. Smaller, but requires reliable change detection (today's broken state suggests this isn't currently happening).
+
+Option B is the correct database-design choice; Option A is the operationally-simpler one. Recommend B with a unit test that confirms a write happens when (and only when) the rating changes.
+
+**Effort:** ~2h to wire change-detection in rating-mcp + tests; ~30 min to backfill a one-time snapshot of current state to seed the history.
+
+---
+
+## 18. Capture `applied_rating`, `rating_rule`, `nfa_stars` in `bond_rating_history` (opened 2026-05-15)
+
+**Symptom:** `bond_rating_history` captures the four raw per-agency ratings (moodys, sp, fitch, bbg) but NOT the NFA-composite output (`applied_rating`, `rating_rule`, `nfa_stars`). So we can re-derive what S&P said on a given date — but not what Athena displayed as the bond's rating on that date, because the composite derivation isn't versioned.
+
+**Impact for inspector and audit:** "show me what we displayed on this date" cannot be answered for the composite. The rule logic itself (sovereign vs issuer vs best/worst) may also have evolved over time without versioning — so even re-running today's rule against historic agency rows won't necessarily reproduce what was actually shown.
+
+**Schema fix:**
+```sql
+ALTER TABLE bond_rating_history ADD COLUMN applied_rating  TEXT;
+ALTER TABLE bond_rating_history ADD COLUMN applied_rating_numeric INTEGER;
+ALTER TABLE bond_rating_history ADD COLUMN rating_rule     TEXT;
+ALTER TABLE bond_rating_history ADD COLUMN nfa_stars       INTEGER;
+ALTER TABLE bond_rating_history ADD COLUMN rule_version    TEXT;  -- version of the NFA rule logic in force when this row was written
+```
+
+The applied-rating row is conceptually one per `(isin, effective_date)`, not per `(isin, agency, effective_date)` — could live in a sibling table `bond_applied_rating_history` instead. Two-table split is cleaner schemata; one-table-with-NULL-agency is operationally simpler. Recommend the split.
+
+**Coordination with #19:** both fixes belong to the same rating-mcp write path, so do them together.
+
+**Effort:** ~30 min DDL + ~1h to wire the write + ~30 min backfill.
+
+---
+
+## 17. Bond Data Inspector — UI + thin HTTP layer over existing validator views (opened 2026-05-15, REFRAMED)
+
+> Supersedes codebase-mcp memory #322 (which had this living in a new standalone service or cbonds_mcp — both wrong; cbonds is gated to the watchlist subset, not the universe). codebase-mcp.remember and update_memory both rejecting calls today — see #12 — so logged here.
+
+**Use cases driving this — REFRAMED 2026-05-15 after pre-flight checks:**
+
+1. **Saudi 2060 rating** — Athena shows "A+" but `applied_rating` is **AA-**. Pre-flight confirmed no Gemini fallback exists in `bond_reference`; the A+ is `instrument_sp_rating`. Two parallel fixes:
+   - Direct Athena bug fix (`athena_html_v3/BACKLOG.md` #1): render `applied_rating` not S&P.
+   - Inspector value: surface all four rating fields + `rating_rule` + source on a single "Data Sources" view so future divergence is visible to a human in seconds.
+2. **Nakilat search** — Athena's search returns nothing, but `bond_reference` has 2 Nakilat bonds. Pre-flight confirmed it's a search-scope bug, not a coverage gap. Two parallel fixes:
+   - Direct Athena fix (`athena_html_v3/BACKLOG.md` #2): broaden search to query `bond_reference` universe with `pg_trgm`.
+   - Inspector value: same `pg_trgm` index serves the inspector `/search`. Universe-wide search is its job.
+
+**Net effect of reframing:** the MVP is still right, but it's a *complementary* tool to the Athena bug fixes, not a replacement. The Athena fixes are smaller and more direct; the inspector adds the "show me every opinion across every source for any bond" diagnostic that no display-side fix can deliver.
+
+**What:** Inspector is a UI + thin HTTP layer over artefacts that already exist in static-validator:
+- `bond_static_field_sources` (view) — every opinion per `(isin, field, source)`
+- `bond_static_consensus` (view) — modal value + consensus level
+- `bond_static_discrepancies` + `review_discrepancy()` + `promote_discrepancy()`
+- `fetch_canonical_record(isin)` — already returns confidence + sources + where_to_find
+- `list_known_isins` — coverage boundary
+- Planned v0.3 `GET /bond/{isin}` read API at `validator.x-trillion.com`
+
+**Delta endpoints (new on validator):**
+- `GET /search?q=` — fan-out across cbonds-mcp, trace-mcp (FINRA), openfigi-mcp, etf-scraper for "unknown but found upstream"
+- `GET /bond/{isin}/sources` — HTTP shell over `bond_static_field_sources`
+- `GET /bond/{isin}/discrepancies` — HTTP shell over `bond_static_discrepancies`
+- `GET /coverage` — global rollup (% canonical per field, # Gemini-fallback ratings, # low-consensus `principal_repayment`)
+- `POST /enrich` (internal, gated) — adds to CBONDS_WATCHLIST, enqueues audit, fans out producers
+- `POST /override` (internal, gated) — UI wrapper around `promote_discrepancy()`
+
+**Schema additions to support ratings** (model on existing `conventions_source` / `call_date_source` pattern):
+```sql
+ALTER TABLE bond_reference ADD COLUMN moodys_rating          TEXT;
+ALTER TABLE bond_reference ADD COLUMN moodys_rating_source   TEXT;
+ALTER TABLE bond_reference ADD COLUMN sp_rating              TEXT;
+ALTER TABLE bond_reference ADD COLUMN sp_rating_source       TEXT;
+ALTER TABLE bond_reference ADD COLUMN nfa_composite          TEXT;
+ALTER TABLE bond_reference ADD COLUMN nfa_composite_source   TEXT;
+```
+Ratings then participate in `bond_static_field_sources` / `bond_static_consensus` like every other producer. Specificity tiers (#16) automatically rank vendor-direct above Gemini fallback — closes the Saudi 2060 case.
+
+**Key screen change:** the per-bond inspector pivots from "value + source" rows to "live value + every opinion ranked by `specificity_tier`", with inline `[promote tier-1]` / `[override]`. Makes the existing reconciliation infrastructure visible to humans. Example:
+
+```
+Field: nfa_composite                                        [override] [promote]
+
+  LIVE          A+         rating_mcp:gemini_2026-05-15 (tier 4, low trust)
+  ─────────────────────────────────────────────────────────────────────────
+  Other opinions
+  ✓ trace_mcp  A          trace_mcp_2026-05-15           (tier 2, vendor direct)
+  ✓ s_p_direct A          rating_mcp:sp_lookup           (tier 1, vendor authoritative)
+    nfa_calc   A          policy_engine                   (tier 3, derived)
+
+  Specificity rule says S&P-direct should be live. [promote tier-1] to switch.
+```
+
+**Overlap with existing backlog:** touches #5 (`revert_promotion`), #8/#10 (per-source `day_count` columns — exact pattern for ratings), #14 (HMAC + per-field disagreement signal), #16 (specificity tier ranking).
+
+**Open decisions:**
+1. **Public-vs-internal split** — validator's hosted Tier 2 is public per its README; enrichment/override controls are internal-only. Where does the line sit on the read views (`/sources`, `/discrepancies`)?
+2. **Database Register update** for the new rating columns — must check the register (per `mcp_central/CLAUDE.md`) before any ALTER TABLE.
+3. **Search backend topology** — validator fans out to cbonds/trace/openfigi directly, or is there a thin gateway in front?
+
+**MVP scope when picked up:** `GET /search` + `GET /bond/{isin}/sources` + the per-bond inspector screen. Defers `/enrich`, `/override`, `/coverage`, and public-API hardening to v2. Builds entirely on existing validator tables/views — no new producer pipelines needed for MVP (just the rating columns once decision 2 lands).
+
+**Awaiting user go-ahead before any code is written.**
+
+---
+
+## 16. Canonical reconciliation must weigh source-specificity, not just recency (opened 2026-05-12)
+
+**What happened:** Greensaif (XS2542166231) sits in `bond_cashflow_schedule` with 18 explicit redemption rows from CBonds — unambiguous evidence of a sinker structure. The 2026-05-11 Pro+grounding audit read the **Base Offering Circular** (which only carries the *programme conditions* and a *Form of Final Terms template*, not the executed 2038-Notes Final Terms) and could not find the schedule. The DB `AMORTIZING-requires-schedule` CHECK constraint then downgraded the audit row's `principal_repayment` to BULLET. The `bond_static_consensus` view weights both sources but the audit's "high_trust" tag pulled rank, so canonical ended up BULLET — **wrong**, against fact-based vendor data we already had.
+
+**Why this is the bug, not a one-off:** the audit pipeline's "high trust" for prospectus_quoted findings is justified for *generic* prospectus claims (day-count, MW spread definition) where the Base OC is authoritative. It is NOT justified for *bond-specific* fields (per-tranche schedule, par-call date) where the Base OC cannot speak — only the Final Terms can. Today we have no way to distinguish "audit looked at the right document and found nothing" from "audit looked at the wrong document and predictably found nothing." Both produce the same downgrade.
+
+**Fix — source-specificity ladder:**
+Adjust the trust ranking in `bond_static_consensus` so that for any bond-specific field (`principal_repayment`, `amortization_schedule[*]`, `par_call_date`, `make_whole_spread_bp`), source specificity beats audit recency:
+
+```
+SPECIFICITY tier 1: pricing_supplement_audit, final_terms_audit  (bond-specific doc seen)
+SPECIFICITY tier 2: cbonds_cashflow, cbonds_explicit            (vendor reporting bond-specific facts)
+SPECIFICITY tier 3: prospectus_audit (Base OC only),
+                    admin_recon_empirical                        (derived from accrued, not from the doc)
+SPECIFICITY tier 4: etf_observation, llm_inference              (anything else)
+```
+
+A tier-2 source disagreeing with a tier-3 source wins. A tier-1 source disagreeing with tier-2 wins again. Today every source goes into the same "n_agreeing" bucket — we need stratified comparison.
+
+**Where to apply:**
+- `bond_static_field_sources` view: add a `specificity_tier` column derived from `source`.
+- `bond_static_consensus` view: pick modal value from the highest-specificity tier that has any entries, NOT from the most-populous bucket.
+- `promote_discrepancy()`: when canonical and a higher-specificity source disagree, the discrepancy table should flag the canonical as the disputed side, not the higher-specificity source.
+
+**Audit-pipeline change (companion):** the Tier 3 (PDF) prompt should refuse to claim BULLET for an EMTN bond unless the model has seen a Pricing Supplement or Final Terms PDF (not a Base OC). Add a `pdf_type_identified` field to the model's structured output — `"base_oc"`, `"pricing_supplement"`, `"prospectus_supplement"`, `"final_terms"` — and require `pdf_type_identified IN ('pricing_supplement','final_terms','prospectus_supplement')` for a `principal_repayment` claim to be eligible to write canonical.
+
+**Greensaif specifically:** in addition to fixing the rule above, source the actual Final Terms PDF (LSE ISM filing 2023-02; or BNP Paribas Taiwan / TPEx mirror). Pro+grounding hallucinated two BNP URLs trying to find it — manual sourcing required. Once the PDF is in hand, re-run Tier 3 to get image proof.
+
+**Why it matters:** without this, the pipeline's failure mode is silent — canonical gets the wrong answer and looks confident about it. Other EMTN bonds where we only have the Base OC will get the same treatment by default.
+

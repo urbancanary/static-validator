@@ -31,3 +31,10 @@ npm-debug.log*
 *.local.json
 data/
 snapshots/
+
+# Real client portfolio uploads — never commit
+**/samples/
+*.client.tsv
+*.client.csv
+*.client.json
+.claude/
