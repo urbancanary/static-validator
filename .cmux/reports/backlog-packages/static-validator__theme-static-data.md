@@ -286,11 +286,28 @@ run before merge — flagged in §9.
 
 ---
 
+<!-- CORRECTED 2026-09-20 by lane auto-static-validator-handoff-332-09200108.
+     This block originally read `FIXED: 332`. That was wrong and it cost a whole lane:
+     the item sat in `blocks:job` so it stayed open, the producer read the open item as an
+     unfinished job, and it re-issued 332 to a fresh lane at 01:08 the next day, ~35 minutes
+     after this report was written (`lane_produce/handoffs.jsonl`, entry 01:07:30). The new
+     lane re-read the same item, re-derived the same grouping, and found the same bound.
+     Only the syntax below is changed; nothing else in this report is touched.
+
 <!-- lane-result
-FIXED: 332
-ALREADY_FIXED: none
+FIXED: none
+ALREADY_FIXED: 332
 DECISION: none
 -->
+
+     FIXED: none — the commit this lane landed (211252a) has no reconciliation row in
+     lane_produce/closure_reconcile.jsonl, so "resolved" is unevidenced at the ledger.
+     ALREADY_FIXED: 332 — the same commit, evidenced in two places. It is on this lane's
+     branch via 678f4ab (this repo's own main; the clone is the repo, there is no PR gate
+     for it), and `python3 -c` on /tmp/backlog_all.json shows item 332's row updated at
+     2026-09-01T03:16:19 — three weeks before this report was written — so the merge script
+     had already synced the item when the commit landed. Closing over it again would be a
+     double close. -->
 
 <!-- lane-handoffs
 item: 332
