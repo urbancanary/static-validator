@@ -243,6 +243,101 @@ resolved before v1.0:
 
 ---
 
+## The calc-hash columns in `bond_static_canonical`
+
+`bond_static_canonical` (bond-data Supabase, ~6.3k rows) carries three
+hash columns — `calc_hash_min`, `calc_hash_std`, `calc_hash_full` — that
+are the **published output** of this repo's tier-hash construction. They
+are not an independent design; they are the storage side of the same
+three tiers `SCHEMA.md` §6 defines for the SDK and the read API.
+
+This section records the three things that were open (backlog #1049)
+before anything client-facing is built on top of them.
+
+### 1. What each tier hashes
+
+Identical to `python/src/static_validator/hashes.py::_TIER_FIELDS` and
+`SCHEMA.md` §6. That module is the single source of truth; this table is
+a restatement, and a disagreement between the two is a bug in whichever
+is stale.
+
+| Column | Fields hashed (JCS canonical JSON → SHA-256) |
+|---|---|
+| `calc_hash_min` | `isin`, `coupon`, `maturity_date`, `frequency`, `day_count` |
+| `calc_hash_std` | min set + `issue_date`, `first_coupon_date` |
+| `calc_hash_full` | std set + `calendar`, `business_day_convention` |
+
+Optional fields are populated by the canonical derivations in SCHEMA.md
+§4 *before* hashing, so a client holding only the min set and our
+canonical record produce the same `calc_hash_std` provided the
+derivations apply. `calendar` / `business_day_convention` default to
+`NULL_CALENDAR` / `UNADJUSTED`, which is why `full` is safe for accrual
+and yield comparison but **not** for OAS or spread work against a real
+curve (SCHEMA.md §4, §9).
+
+### 2. Which downstream system reads which tier
+
+| Consumer | Tier | Why |
+|---|---|---|
+| Client SDK / MCP `validate_bond_static` | highest tier both sides hold | Reports the *first diverging* tier, so a min-tier mismatch means the core static is wrong while a full-tier-only mismatch means calendar/BDC |
+| Public read API `GET /bond/{isin}` | all three | The published record carries all three; the client picks |
+| Ops / probe reconciliation of this repo's own output | `calc_hash_full` | Audit-grade — the widest field set, so it is the one that moves when any hashed field moves |
+| Anything doing OAS, spread, or settlement-date work | `calc_hash_full` | Only tier where calendar/BDC are inputs. Still insufficient if `calendar` is a derived default |
+
+There is currently **no consumer of `calc_hash_min` alone.** It is
+published for clients whose static is too sparse to reach a higher tier;
+if no such client exists by the time the read API ships, no code depends
+on it and it can be dropped without a MAJOR bump (SCHEMA.md §7 — removing
+a published artefact that nothing reads is additive-compatible). Confirm
+against the first contracted clients before dropping.
+
+### 3. Security: the tiering is NOT a mitigation, and HMAC is what makes it one
+
+This is the load-bearing correction, and it is why the "three tiers"
+design does not buy the brute-force resistance it looks like it buys.
+
+The static is low-entropy. `calc_hash_min` covers roughly 10¹⁰ plausible
+tuples (coupon × maturity × frequency × day_count, with ISIN known), and
+a modern GPU does ~10¹⁰ SHA-256/sec. **Every tier is brute-forceable, and
+the min tier is the easiest, so a higher tier protects nothing that the
+min tier does not already expose.** Tiering is a *comparison granularity*
+feature — it tells a client which field group diverged — and it is not,
+and must not be documented as, a disclosure control.
+
+The per-field hashes that would give the cleanest disagreement reporting
+are the most dangerous published artefact in the design, for the same
+reason in reverse: `day_count` has 8 canonical values and `frequency` 5,
+so a plain SHA-256 per-field hash of either is a lookup table, not a
+commitment. Per-field hashes are therefore **out of scope until the HMAC
+tier ships** (WNBF backlog #14). With HMAC-SHA256 keyed on a secret held
+by the customer's deployment, per-field hashes become safe *and* the
+client can report ✓ MATCH / ✗ DISAGREE / ? MISSING_LOCAL per field with
+no value ever leaving their network.
+
+Consequence for the DB columns: `calc_hash_*` as they stand today are
+plain SHA-256 and should be treated as **effectively a publication of the
+canonical record** for any ISIN whose static is public knowledge. That is
+tolerable while the only consumer is the customer's own validator. It is
+not tolerable for a public hash database.
+
+### What has to be true before this is client-facing
+
+1. **Decide the min tier's fate** — drop it, or document the sparse-static
+   client it serves. It has no consumer today (backlog #1049's open part).
+2. **Ship the HMAC tier before any public hash database exists** (WNBF
+   #14, `.cmux/decisions/1049-tier-and-hash-service.md`).
+3. **Reconcile the column names.** `calc_hash_*` in the DB vs the
+   README's v0.1 `calc_hash` vs the `hmac-sha256:` prefix planned in #14:
+   the SDK emits `sha256:<hex>` with the algorithm prefix (SCHEMA.md §6)
+   and `schema/tier_hashes.schema.json` enforces
+   `^sha256:[0-9a-f]{64}$`. If the DB columns hold bare hex, every
+   comparison across the boundary needs an explicit adapter, and that
+   adapter is the kind of thing that silently compares `sha256:abc` to
+   `abc` and reports a mismatch forever. Verify what the columns actually
+   store before wiring a client to them.
+
+---
+
 ## TL;DR for the cross-repo reader
 
 - One daily cron, in `ga10-pricing-mcp`, runs everything in order with
