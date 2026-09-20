@@ -141,6 +141,26 @@ class TestDisambiguateDayCount_Prospectus:
         )
         assert res.canonical == "ISDA_30E_360"
 
+    @pytest.mark.parametrize(
+        "excerpt,expected",
+        [
+            # Prospectus literally writes the words, with no sub-variant
+            # qualifier. ISDA 2006 / market convention: bare Actual/365
+            # is the Fixed variant.
+            ("Interest is computed on an Actual/365 basis.", "ACT_365_FIXED"),
+            ("Day count fraction: ACT/365.", "ACT_365_FIXED"),
+            # A qualifier anywhere in the text must still win over the
+            # bare pattern.
+            ("Interest accrues on an Actual/365.25 basis.", "ACT_365_25"),
+            ("Day count: Actual/365 (Fixed).", "ACT_365_FIXED"),
+        ],
+    )
+    def test_act_365_phrases_resolve(self, excerpt, expected):
+        res = disambiguate_day_count("30/360", PANAMA_ISIN, prospectus_text=excerpt)
+        assert res.canonical == expected
+        assert res.confidence == "high"
+        assert "prospectus" in res.sources_used
+
 
 # -------- calendar / BDC tests --------
 
@@ -598,6 +618,33 @@ class TestParseVendorDayCountLabel:
     def test_ambiguous_labels_return_none(self, label):
         # These need disambiguate_day_count + multi-source to resolve.
         assert parse_vendor_day_count_label(label) is None
+
+    @pytest.mark.parametrize(
+        "label,expected",
+        [
+            # WNBF audit backlog #3: `canonical_day_count()` emits enum
+            # names in both underscored and slashed forms. Both mean the
+            # same convention and must not read as a source disagreement.
+            ("ACT_365", "ACT_365_FIXED"),
+            ("ACTUAL_365", "ACT_365_FIXED"),
+            ("ACT_365_25", "ACT_365_25"),
+            ("ACT_360", "ACT_360"),
+            ("ACT_ACT_ICMA", "ACT_ACT_ICMA"),
+            ("ACT_ACT_ISDA", "ACT_ACT_ISDA"),
+            ("BOND_BASIS_30_360", "BOND_BASIS_30_360"),
+        ],
+    )
+    def test_enum_name_labels_pass_through(self, label, expected):
+        assert parse_vendor_day_count_label(label) == expected
+
+    def test_bare_act_365_is_still_ambiguous(self):
+        # `ACT/365` (slash, no variant) genuinely spans Fixed and .25 and
+        # must keep routing to multi-source resolution — do not fold it
+        # into the enum-name passthrough above.
+        assert parse_vendor_day_count_label("ACT/365") is None
+        res = disambiguate_day_count("ACT/365", PANAMA_ISIN)
+        assert res.canonical is None
+        assert res.confidence == "unresolved"
 
     def test_unknown_label_returns_none(self):
         assert parse_vendor_day_count_label("MADE_UP") is None

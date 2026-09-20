@@ -115,6 +115,20 @@ _VENDOR_DAY_COUNT_LABELS: dict[str, str] = {
     "ACT/365F": "ACT_365_FIXED",
     "ACT/365.25": "ACT_365_25",
     "ACTUAL/365.25": "ACT_365_25",
+    # Internal / derived `day_count_hypothesis` labels. The DB helper
+    # `canonical_day_count()` emits the enum name with separators instead of
+    # underscores (`ACT_365`, `ISDA_30E_360`-shaped strings come back in both
+    # forms). WNBF audit backlog #3: an unmapped `ACT_365` made the
+    # etf_observation source look like it disagreed with prospectus_audit's
+    # `ACT_365_FIXED` when both meant the same convention.
+    "ACT_365": "ACT_365_FIXED",
+    "ACTUAL_365": "ACT_365_FIXED",
+    "ACT_365_25": "ACT_365_25",
+    # Enum names with slashes instead of underscores — same convention, the
+    # separator just didn't survive a round-trip through a vendor column.
+    "ACT_360": "ACT_360",
+    "ACT_ACT_ICMA": "ACT_ACT_ICMA",
+    "ACT_ACT_ISDA": "ACT_ACT_ISDA",
 }
 
 
@@ -130,13 +144,22 @@ def parse_vendor_day_count_label(label: str | None) -> str | None:
     disambiguate_day_count with multi-source observations or prospectus_text
     to resolve those.
     """
-    if not isinstance(label, str):
+    if isinstance(label, str):
+        key = label.upper().strip()
+    elif label is None:
         return None
-    key = label.upper().strip()
+    else:
+        return None
     if key in _VENDOR_DAY_COUNT_LABELS:
         return _VENDOR_DAY_COUNT_LABELS[key]
+    # Canonical name either exactly, or in the internal label form the DB
+    # helper `canonical_day_count()` emits (separators kept, case normalised
+    # — SCHEMA.md §3 names are already uppercase, so case is lossless here).
+    # `ACT/365` still falls through to None: it is genuinely ambiguous
+    # between ACT_365_FIXED and ACT_365_25 and must be resolved by
+    # disambiguate_day_count, not guessed here.
     if key in DAY_COUNT_ENUM:
-        return key  # already canonical
+        return key
     return None
 
 
@@ -220,6 +243,17 @@ _PROSPECTUS_DAY_COUNT_PATTERNS: list[tuple[re.Pattern[str], str, str]] = [
      "prospectus pinpoints 'ACT/ACT (ISDA)'"),
     (re.compile(r"actual/365\s*\(\s*fixed\s*\)"), "ACT_365_FIXED",
      "prospectus pinpoints 'Actual/365 (Fixed)'"),
+    (re.compile(r"actual/365\s*\.\s*25|actual/365\s*25"), "ACT_365_25",
+     "prospectus pinpoints 'Actual/365.25'"),
+    # Bare "Actual/365" / "ACT/365" — the words on the page. Fixed is the
+    # dominant variant in cash bonds (see _VENDOR_DAY_COUNT_LABELS) and
+    # ISDA 2006 defines the unqualified term as Actual/365 Fixed, so this
+    # is a market convention, not a guess. Deliberately the LAST 365
+    # pattern: a ".25" or "(Fixed)" qualifier always wins over it. Keep
+    # this consistent with canonicalize._AMBIGUOUS_DAY_COUNT_HINTS, which
+    # refuses the same bare string on the primary-record path.
+    (re.compile(r"\bact(?:ual)?/365\b(?!\s*\.?\s*25)"), "ACT_365_FIXED",
+     "prospectus uses bare 'Actual/365' — ISDA 2006 treats this as Fixed"),
 ]
 
 
