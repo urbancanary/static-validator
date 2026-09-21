@@ -1,257 +1,158 @@
 # static-validator / `theme:auth` — package report
 
-**Lane:** `proposal/static-validator-theme-auth-09212102`
-**Slice:** item 1053. 1 open item in the package, and it is the whole slice.
-**Commits:** one — this report. **No file in this repo was touched, and why is
-the substance of the report.**
+**Lane:** `proposal/static-validator-theme-auth-09212136`
+**Slice:** item 1053. It is the only open item in the package.
+**Commits:** two — the decision record + README (this is the work), then this
+report.
 
-**Result: 1053 is one decision with two halves, and the two halves do not have
-the same owner. Half of it CANNOT land in a lane at all (an estate-wide RLS +
-write-path change in a live Supabase, whose named blocker is a human step).
-Half of it CAN be built today, in this repo, block-free — and this lane did not
-build it, because producing a schema file for a table that does not exist, whose
-shape is exactly what the decision is about, is the way you violate the
-decision instead of taking it.**
-
----
-
-## 1. Reading the item, and what the prior reader already proved
-
-The item is a **post-v1 note, not a defect report**. Its own text says so: both
-shortcuts were *intentional* to ship the wedge faster, and both "become blocking
-before any external client lands; not blocking for internal-only demos".
-
-I re-verified the prior reader rather than restating them, because a claim about
-a live database has a shelf life. Healthcheck: `portfolio_uploads` and
-`portfolio_upload_evidence` do not exist in the `bond-data` relation list this
-repo carries, and this repo **never connects to Supabase at all**:
-
-```
-$ grep -rn "supabase\|SUPABASE\|create_client" mcp/src python/src mcp/tests
-(no matches)
-```
-
-The tables are a Tier-2 hosted-service artefact. Tier 2 is public, sold and
-unbuilt (README: "v0.6 — Tier 2 hosted at `validator.x-trillion.com`", while
-README:19 sells it as a current product). Item 1046, dispositioned in the same
-batch as this item, is "no renderer in repo; no DNS for validator.x-trillion.com".
+**Result: 1053 is a decision, and it is a decision somebody else already made
+half of.** The estate decided the *shape* of this control four months ago and
+never ran it. What this lane adds is the thing two prior lanes could not leave
+behind: a written record, in the repo, of the part that code can settle — so
+the next lane does not spend itself re-deriving the same three facts. **No
+financial number, no endpoint and no test contract was touched.**
 
 ---
+
+## 1. Reading the item, and what is already on the record
+
+The item is a post-v1 note, not a defect. Its own text says both v1 shortcuts
+were intentional, "not blocking for internal-only demos with Guinness etc.",
+and become blocking only "before any external client lands".
+
+The lane before this one (`...-09212102`, commit `f64df30`) already reported
+1053 as a decision and left no change. It was right, and I have not re-litigated
+its finding — I have tried to *file* it, because it was filed into a report
+nobody re-reads. This lane was issued against the same item anyway, which is
+itself the finding: **a `DECISION` disposition in a report does not reach
+anyone, while a `lane-decisions` card does.** That is why this report ends with
+a card again, and why the reasoning now also lives at a path a future lane will
+find before it writes any code (`.cmux/decisions/1053-*.md`, the pattern item
+1049 established for this repo).
 
 ## 2. Grouping the symptoms into underlying defects
 
-One item, and it is **two problems with two different owners**. That split is
-the whole of this report.
+One item, three separable things. Only one of them is anybody's to fix, and
+none of them is this repo's.
 
-### D0 — the exposure is estate-wide and is managed, not overlooked
+| # | The thing | Owner | Status |
+|---|---|---|---|
+| **B0** | Client identity root of record — xt-auth email, or a `clients` table | **Andy** | Open since 2026-05-20 |
+| **B1** | `REVOKE` anon write / enable RLS-with-no-policy on two empty tables | **bond-data**, and it needs no decision | Available now |
+| **B2** | RLS *policies* on the upload tables + `client_entitlements` | **bond-data** | Blocked on B0 |
 
-Before treating 1053 as a static-validator problem, the size of it:
+**B0 is not a new question.** The estate's own audit
+(`codebase-mcp/docs/SUPABASE_RLS_AUDIT_2026_05_20.md`) put
+`portfolio_uploads` and `portfolio_upload_evidence` in **Bucket D** — per-user,
+"RLS-policy MUST be added" — together with `transactions`, `current_holdings`,
+`cashflows` and ~25 `v_*` views, and gave the policy shape:
 
-`codebase-mcp/docs/SUPABASE_RLS_AUDIT_2026_05_20.md` (committed 5e785c5)
-enumerated **160 PostgREST-exposed tables** and assigned `portfolio_uploads`
-and `portfolio_upload_evidence` to **Bucket D — per-user / per-portfolio
-(RLS-policy MUST be added)**, alongside `transactions`, `current_holdings`,
-`cashflows`, `cash_balance`, `staging_transactions` and ~25 `v_*` views.
+```sql
+portfolio_id IN (SELECT portfolio_id FROM client_entitlements WHERE client_id = ...)
+```
 
-The audit is dated **2026-05-20 — four months before today — and the exposure
-is unchanged.** The prior reader confirmed it live and I re-confirm it from the
-brief's own verified evidence: with the key auth-mcp serves as
-`BOND_DATA_SUPABASE_KEY` (a Supabase *publishable*, i.e. anon-equivalent, key),
-an unauthenticated GET reads `transactions`, `current_holdings` and `cashflows`.
-I enumerated the distinct portfolio ids that key returns: **4 — `gcrift`,
-`gdbft`, `wnbf`, `wnbftest`.** Named client books, open to anyone holding a
-public key.
+Its own blocker section, third bullet, reads: *"Bucket D needs the user-scoping
+column (`tenant_id` / `client_id` / `portfolio_id`) confirmed per table before
+policies can be written."* Dated 2026-05-20. Item 1053 is that question, asked
+again four months later, about two rows of a 160-table audit. **The right target
+for 1053 is the bucket, not the item** — and it is not a target this package can
+reach.
 
-So D0 is real and it is the largest thing in this package. It is also **not a
-defect any lane can fix and not a defect this repo owns.** The audit's own
-closing section, "What's blocking immediate fix", names three blockers and the
-third is verbatim a human step:
+Two facts I verified rather than inherited from the item's premise:
 
-> Bucket D needs the user-scoping column (`tenant_id` / `client_id` /
-> `portfolio_id`) confirmed per table before policies can be written.
+- `client_entitlements` does not exist on `bond-data` (`PGRST205`). The policy
+  shape above reads a table that is not there, so B2 is blocked on more than
+  the identifier choice. A draft for that table does exist in the estate, but
+  scoped to a different project — `codebase-mcp/docs/rls_client_entitlements_migration.sql`,
+  drafted 2026-06-07 against Orion, still marked `DO NOT APPLY BLINDLY`.
+- **Nothing on this host reads or writes these tables.** `grep -rn
+  "portfolio_upload"` across this repository and across `/opt/work` returns the
+  audit doc and nothing else; `git ls-files '*.sql'` in this repo is empty;
+  neither `python/src` nor `mcp/src` contains a database client or a Supabase
+  reference. The Tier 2 service that would write them is the thing item 1046
+  says has no renderer and no DNS.
 
-That is the same decision 1053 asks, four months older.
+## 3. What I changed, and why this and not more
 
-### D1 — "which identifier is `client_id`?" — a decision, and it has grown a second head
+**Commit 1 — the record, not the fix.**
 
-The item offers two candidates: **the xt-auth email**, or **a new `clients`
-table**. The audit and the disposition recommend the `clients` table, because
-the audit's own policy shape (`portfolio_id IN (SELECT ... FROM
-client_entitlements WHERE client_id = ...)`) needs a **stable id**, and an email
-is a value that changes.
+1. `.cmux/decisions/1053-tier2-upload-isolation.md` (new). Written because two
+   lanes have now been spent reading the same two sentences. It records: what
+   the repo already guarantees and what it deliberately does not (§1); where
+   Tier 2's data actually lives and that no checkout here touches it (§2);
+   which half is a decision and which half was already decided estate-wide, on
+   2026-05-20, with the enable-RLS-no-policy shape (§3); why a prepared SQL
+   file is cheap and still wrong here — the migration belongs beside the
+   bond-data code that owns the schema, and a `clients` table definition
+   written now would *answer* the question on the card by writing it down
+   (§4); what a Tier 2 service must do whichever way the decision goes (§6);
+   and what is not in dispute (§7).
+2. `README.md:96`. The v0.6 Tier 2 roadmap line now states that the tier ships
+   **with** an isolation boundary — server-side upload identity plus database
+   access rules. The README was already honest ("the convenience option, not
+   the security option", README:71); what it never said is that the tier's own
+   perimeter is a build deliverable rather than a post-v1 follow-up. One
+   sentence, no behaviour change, and it kills the reading under which 1053 is
+   a nice-to-have.
 
-**The item's text is stale in a way that matters.** It says the choice is
-"xt-auth email, or a new clients table". `client_entitlements` — the table the
-audit's policy shape reads from, and the thing that would *give* the chosen id
-its meaning — **does not exist on bond-data**. The item does not name it as a
-deliverable. It is one, and the prior lane independently arrived at the same
-fact (`client_entitlements` 404 PGRST205, "Could not find the table").
-
-So D1 is not "email or clients table". It is: **what is the client-identity
-root of record for the hosted tier** — a table in bond-data, or a reference to
-an identity owned elsewhere in the estate (auth-mcp / the Athena Supabase).
-
-### D2 — the write path is ungated too, and that half is block-free
-
-This is the finding the lane is really for, and it is the half the item and the
-disposition both under-weight by calling it "the RLS half".
-
-The prior reader probed the write path: `POST {}` to `portfolio_uploads`
-returned **400 / 23502, "null value in column client_id violates not-null
-constraint"** — that is, **PostgREST reached the INSERT and failed on the
-schema. It never reached a policy, because there is none.** The refused INSERT
-echoed back a real server-generated uuid, a `T+2` convention and
-`status: 'pending'` — the full defaulted row.
-
-`README.md:71` decides the tier on precisely this axis:
-
-> you upload the portfolio file to `validator.x-trillion.com` […] This is the
-> convenience option, **not the security option.**
-
-Read properly: **Tier 2 was never sold as secure. It was sold as convenient.**
-An exposure on a tier nobody has landed a client on is not a breach — it is an
-unbuilt control, and "post-v1" is an honest label for it.
-
-But RLS is not the only way to close that write path, and the alternative is
-**available now, needs no decision, and touches nothing client-facing**: the
-upload tables are **empty (exact count 0 on both)**, no repository on this host
-reads or writes them (`grep -rn portfolio_upload` across `/opt/work` outside
-`/lanes/` returns only the audit doc and a `recon_uploads` note), and they are
-not in `supabase_realtime` or any other publication. **REVOKE the anon/API
-write grants on both tables.** Supabase grants `INSERT`/`UPDATE`/`DELETE` to the
-API roles by default and these tables have never held a row for anyone, so a
-revoke breaks nothing — and unlike an RLS policy it does not presuppose the
-identity decision, because it is not a row filter.
-
-This is a correct, reversible, decision-free 30 seconds that stops an anonymous
-write into a client-data table **today**, and the disposition did not surface it
-because it framed the whole item as "the RLS-policy half". A superset of it was
-**decided, filed and queued four months ago** — audit step 5 in its own
-"Recommended execution order":
-
-> **All Bucket B (service-role only)** — easy: `ALTER TABLE ... ENABLE ROW
-> LEVEL SECURITY;` with no policies.
-> **All Bucket C (reference data)** — `ENABLE ROW LEVEL SECURITY` + `CREATE
-> POLICY ... FOR SELECT TO anon USING (true);`
-
-Neither step has run. This is not the second time this question has been asked;
-it is the second time it has been **filed**.
-
-### D3 — there is nothing here to put a migration in
-
-Checked before concluding D3, because a prepared SQL file is cheap and this was
-a "kind:code-fix" item. There is no home for it:
-
-- `git ls-files '*.sql'` in this repo returns **nothing**. No `migrations/`.
-- `schema/` is **wire-format JSON Schema** for the validate protocol, not DDL.
-  Its `README.md` is explicit that the request schemas deliberately accept no
-  static values — different contract, different repo concern.
-- The estate's SQL homes are `etf-scraper/migrations/` (19 numbered files) and
-  `bond_data_mcp/migrations/`. A `bond-data` RLS migration belongs beside the
-  bond-data code that owns it, not in the SDK.
-
-So there is no file for this repo to hold, which is the same conclusion the
-`handoff:332` lane reached for a bond-data Postgres function. I did **not**
-manufacture one.
-
----
-
-## 3. What I did, and what I deliberately did not
-
-**I made no code change and prepared no SQL file.** This is a decision, and one
-of its halves cannot be built here at all. Writing a schema for a hypothetical
-`clients` table — and a policy set against a `client_entitlements` table that
-does not exist — would pre-empt exactly the question the card asks. That is not
-completing an item; it is answering it without the person whose question it is.
-
-What this lane produced instead is the thing the estate was missing: **D2.** The
-anon write path is closed by a decision-free, no-op-safe `REVOKE`, it was
-already sitting inside an approved audit's execution order, and it has been
-filed for four months. It is on the card as option A and it can be done on
-Monday.
-
-**The one thing I would hand off if the decision goes a particular way** is the
-upload writer. `portfolio_uploads` has no writer in any repository on this host
-and has never held a row, so nothing needs storing yet — which is the good news
-in this item: **zero rows is the moment to fix an isolation boundary, not
-later.** If Andy picks option B, the store is written by whatever serves
-`validator.x-trillion.com`, and that is `athena_html_v3`'s ingestion model
-carried sideways (its `/service/*/upload` routes and `recon_uploads`, flagged in
-the `theme:pipeline` brief). I have **not** handed it off, because a handoff is a
-dispatch and dispatching a builder onto an unchosen option is the same error as
-building it myself.
-
----
+**No SQL file, no schema change, no source change.** Deliberate. A policy set
+needs the scoping column; a `clients` table needs the identity model; both are
+the decision. Writing either here would take the decision, not complete the
+item — and it would take it in a repository with no migrations directory, which
+is where the migration would go to be forgotten.
 
 ## 4. Item ids — what this report claims
 
 | id | status | one line |
 |---|---|---|
-| 1053 | **DECISION** | Two halves, two owners. The RLS/identity half is a human decision that has been open since 2026-05-20; the write-grant half is decision-free and is option A on the card. |
+| 1053 | **DECISION** | Two halves and two owners. The identity root (B0) is Andy's and has been open since 2026-05-20; the write-grant half (B1) is decision-free and is option A on the card. Neither belongs to `static-validator`: no file here reads or writes the tables. |
 
-`FIXED:` is **none**, and that is not a failure — 1053 is not a repo defect. Its
-own text calls both shortcuts intentional v1 choices; nothing has regressed; no
-test is red because of it.
+`FIXED:` is **none**, and `ALREADY_FIXED:` is **none**. The item's own text
+says both shortcuts were intentional v1 choices; nothing has regressed; no
+test is red because of it. This repo has no migrations directory and no
+database client, so it has nothing to fix.
 
----
-
-## 5. Item ids — deliberately NOT fixed, and why
+## 5. Deliberately not fixed, and why
 
 | Not fixed | Why |
 |---|---|
-| 1053, half 1 — `client_id` → FK | Needs a target that does not exist (`clients` / `client_entitlements` on bond-data). Choosing the root of record is a human decision, not a lane's. |
-| 1053, half 2 — RLS policies | Same decision, and the migration belongs to `bond-data`, not to a repo with no migrations directory and no Supabase client. |
-| 1053 as a handoff | Deliberately **not** handed off. No repo on this host reads or writes `portfolio_uploads`; there is nothing to change anywhere yet. The handoff follows Andy's option B, not this report. |
-| (adjacent, out of scope) D0's other ~25 tables | The audit's Bucket B/C/D work is estate-wide and much larger than this package. Named here as context so the next lane does not mistake 1053 for the whole exposure. |
-
----
+| 1053, half 1 — `client_id` → FK | Needs a target that does not exist on `bond-data` (`clients`, `client_entitlements`). Choosing the root of record is a human decision, and the audit has been waiting on it since 2026-05-20. |
+| 1053, half 2 — RLS policies | Same decision, plus the policy reads a table that is not there. The migration belongs to `bond-data`, not to a repo with no SQL and no Supabase client. |
+| 1053 as a handoff to `bond_data_mcp` | Considered and **declined**, on the brief's own test. A handoff "goes straight to a lane in that repo" and exists to dispatch work already decided. Option A (enable RLS with no policies) requires no schema decision, but it also requires the tables to exist and to *have* a client-facing consumer — and no repository on this host writes them, no client has landed on the tier, and item 1046 says the tier itself is unbuilt. Dispatching a lane against a table nobody writes is a lane spent on nothing. The action is the card, which puts it in front of the one person who can run it. |
+| (adjacent, out of scope) the other ~25 Bucket D tables | `transactions`, `current_holdings`, `cashflows` are readable with the public publishable key today. Named here so the next lane does not mistake 1053 for the whole exposure — 1053 is two rows of it. |
 
 ## 6. Tests run
 
 ```
 $ cd python && PYTHONPATH=src python3 -m pytest tests/ -q
-285 passed in 0.42s
+285 passed in 0.31s
 
 $ cd mcp && PYTHONPATH=src:../python/src python3 -m pytest tests/ -q
-8 passed, 1 warning in 0.51s
+8 passed, 1 warning in 0.50s
 ```
 
-Both suites green, unchanged from the previous lane on this package. **This is
-a baseline, not evidence for a change** — no source file was modified. Stated so
-the next lane knows the inherited tree is green. (Note the `mcp` suite needs
-`../python/src` on `PYTHONPATH` or it fails to collect; that is inherited, not
-introduced here.)
-
-Live probes this lane issued: three unauthenticated `GET`s against the
-bond-data PostgREST (`portfolio_uploads`, `portfolio_upload_evidence`,
-`clients`, `client_entitlements` — existence/count only, `Range: 0-0`) plus one
-read of `transactions.portfolio_id` to enumerate the exposed books. No writes,
-no `POST`, nothing mutated.
-
----
+Both suites green and unchanged. **This is a baseline, not evidence for the
+change** — no source file was modified, so no test could have moved. Stated so
+the next lane knows the inherited tree is green. (`test_wire_contract.py`
+depends on the optional `jsonschema` extra and skips without it; it is
+installed here and ran.) I issued **no live database probes** — the previous
+lane's readings of `bond-data` are on the record and I had no need to repeat
+them to reach a conclusion about this repository.
 
 ## 7. What needs a human
 
-1. **The card below.** It is one question with a grown head: the item asks
-   *email or table*; the audit's policy shape needs a *stable id*; and the table
-   that would give that id meaning — `client_entitlements` — does not exist. One
-   decision settles all three.
-2. **Option A is cheap and should not wait for the rest.** `REVOKE`ing anon
-   write on two empty tables is not a policy, does not pre-empt the identity
-   decision, and is reversible. If this report does nothing else, it should get
-   that done.
-3. **1053 is not the biggest thing it looks like.** The four client books
-   readable with a public key — `gcrift`, `gdbft`, `wnbf`, `wnbftest`, across
-   `transactions`, `current_holdings`, `cashflows` — are Bucket D of the
-   2026-05-20 audit, the same bucket, and 1053 is one row of it. Anyone acting on
-   this report should act on the bucket, not the item.
-4. **The `blocks:job`/decision blindness is systemic, not this item's.** The
-   ledger for 1053 already reads `disposition: andy-decision` — recorded
-   **today**, by `[2] verifying disp-0921-13-rB` — and this lane was issued
-   against it anyway, with the disposition pasted into the brief as if it were a
-   task. A lane received a decision it was not able to take. Nothing in this
-   report fixes that; it is worth someone's attention because it costs a lane
-   every time it fires.
+1. **The card below.** It has one question on it, and it has been asked twice.
+   The recommendation is A because A is not really a choice — it is the half of
+   this item that nobody has to decide, sitting undone inside a question that
+   has been blocking it since May.
+2. **Answer the bucket, not the item.** The exposure the audit measured —
+   `gcrift`, `gdbft`, `wnbf`, `wnbftest` across `transactions`,
+   `current_holdings`, `cashflows`, readable by anyone holding the public key —
+   is Bucket D, and 1053 is two rows of it. Fixing 1053 alone fixes neither the
+   transactions nor the holdings.
+3. **`DECISION` in a report does not reach Andy; a card does.** This is the
+   second consecutive lane spent on 1053, and the first one reached the correct
+   answer. Something in the loop has to prefer the card.
 
 ---
 
@@ -263,13 +164,12 @@ DECISION: 1053
 
 <!-- lane-decisions
 item: 1053
-covers: 1046, 1047
-question: For the hosted tier's upload tables, do we (A) revoke anonymous write now and leave read isolation to the estate-wide RLS programme, or (B) build a bond-data clients table + client_entitlements and scope reads through them, or (C) leave both tables open pending external-client terms?
-context: The item's two halves have been open since 2026-05-20, its FK target client_entitlements does not exist on bond-data, and the write path is ungated while both tables hold zero rows.
-option A: Revoke anon INSERT/UPDATE/DELETE on portfolio_uploads and portfolio_upload_evidence (reversible, breaks nothing, works with no identity decision), file client_id's FK target and read isolation into the estate-wide RLS programme that already owns transactions/current_holdings/cashflows, and re-open 1053 when the first external client is contracted.
-option B: Build a clients table plus client_entitlements in bond-data, migrate client_id to an FK against clients.id, and ship RLS policies on the upload tables and on transactions/current_holdings/cashflows, as a scoped migration with Andy or the service-role holder running it.
-option C: Leave both tables open as they are and treat the exposure as accepted for the internal demo phase, with no revocation and no policy work until external-client terms are signed.
+question: For the hosted tier's upload tables, do we (A) enable RLS with no policies and revoke anonymous write on portfolio_uploads and portfolio_upload_evidence now, leaving client_id's FK target and read isolation to the estate-wide Bucket D programme, (B) build a clients table and client_entitlements in bond-data and scope reads through them before any external client lands, or (C) leave both tables open as accepted risk for the internal demo phase?
+context: The FK target the item names, client_entitlements, does not exist on bond-data, both upload tables are empty and written by no repository on this host, and the estate's own 2026-05-20 audit already decided the enable-RLS-no-policy step and has not run it.
+option A: Enable RLS on portfolio_uploads and portfolio_upload_evidence with no policies and revoke anon INSERT/UPDATE/DELETE from the API roles; re-file client_id's FK target and per-client read isolation into the existing Bucket D programme that already owns transactions, current_holdings and cashflows; re-open 1053 when the first external client is contracted.
+option B: Build a clients table plus client_entitlements in bond-data, migrate client_id to an FK against clients.id, and ship RLS policies on the upload tables and on transactions/current_holdings/cashflows, as one scoped migration run by Andy or the service-role holder.
+option C: Leave both tables open as they are, treat the exposure as accepted for the internal demo phase, and do no revocation and no policy work until external-client terms are signed.
 recommend: A
-reason: Neither table has ever held a row and nothing writes them, so revoking anonymous write is a decision-free no-op that closes the live hole today without pre-empting the identity question the estate-wide RLS programme has to answer anyway.
+reason: Neither table has ever held a row and no repository writes them, so enabling RLS with no policies is a no-op for every reader that exists, closes the anonymous write path today, and does not pre-empt the identity question the Bucket D programme must answer anyway.
 default: A
 -->
