@@ -93,7 +93,7 @@ The schema applies to **every fixed-rate bond**, not only vanilla bullets. Struc
 - **v0.3** — Public read API (Cloudflare Worker), seeded with the first ~9k cross-referenced bonds; subscription gates enriched fields
 - **v0.4** — JavaScript SDK; cross-language byte-identical canonical-JSON CI harness
 - **v0.5** — Self-hosted container (Docker image on GHCR; one-click Railway template) for Tier 1 deployment
-- **v0.6** — Tier 2 hosted at `validator.x-trillion.com`; portfolio history; shareable URLs
+- **v0.6** — Tier 2 hosted at `validator.x-trillion.com`; portfolio history; shareable URLs. Tier 2 stores what you upload, so it ships behind an isolation boundary: server-side identity for every upload, plus database access rules so no caller can read another client's portfolio. See `.cmux/decisions/1053-tier2-upload-isolation.md`.
 - **v1.0** — Ed25519-signed attestations, daily signed offline snapshots for Tier 0, Helm chart, Terraform module
 
 The schema (SCHEMA.md) is stable enough to design against; expect minor revisions before v1.0.
