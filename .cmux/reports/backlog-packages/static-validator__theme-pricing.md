@@ -156,6 +156,100 @@ artefact added is a `.cmux/decisions/` markdown file, which no test reads.
 
 ---
 
+# Addendum — lane `…09230430` (the fourth)
+
+**Slice:** item 1043. **Commits:** one — the report and the decision card.
+
+The three sections above are correct and I re-verified their two load-bearing
+claims in the current tree rather than taking them on trust:
+
+```
+$ git grep -in price -- schema/          → no output
+$ sed -n '12,20p' schema/source_reference.schema.json
+    "enum": ["prospectus", "supplement", "etf_holding", …]   ← etf_holding is legal wire
+$ sed -n '24,31p' schema/published_record.schema.json
+    "^(coupon|day_count|frequency|maturity_date|issue_date|first_coupon_date|
+       calendar|business_day_convention)$"                    ← price is not admitted
+```
+
+So: price is not a validated field, there is no upload or portfolio path in this
+repo, and 1043's code half has no home here. That much is settled and I am not
+re-deriving it a fourth time.
+
+## 8. What this lane actually found — the card was being refused, not ignored
+
+The prior lane did everything right and was still re-issued. The reason is not
+that it wrote no card. It wrote a **correctly-shaped card that the queue
+refuses**, so the card filed nothing and 1043 stayed open.
+
+A fallback price is a *client-facing financial number*, so
+`andy_queue.is_financial()` matches this decision and the queue applies Andy's
+2026-09-06 rule — **a financial decision's default must be a no-op**. The prior
+lane's option A was:
+
+> "Keep 1043 parked — the standing v1 behaviour … is the answer until a real
+> incompletely-priced client upload is produced …"
+
+That option *describes* doing nothing but never says so in the words the gate
+looks for. `NOOP_RE` (`andy_queue.py:89`) matches `do nothing|does nothing|
+change nothing|no change|nothing changes|no action|leave …|as[- ]is|status quo|
+hold off|wait for|park it|defer` — "Keep 1043 parked" matches none of them.
+"parked" is not "park it".
+
+Verified by running the card through the real gate, not by reading it:
+
+```
+OLD option A  → is_noop False → REFUSED   (andy_queue.add() sys.exit)
+NEW option A  → is_noop True  → ACCEPTED
+```
+
+And that refusal is silent in the way that matters. `lane_merge.card_problem()`
+checks **shape only** (`question, context, recommend, reason, default`, 2–3
+options), so it passes this card; the merger then calls `aq.add(ns)`
+(`lane_merge.py:~1082`), catches the `SystemExit`, and appends it to
+`rec["raised_items"]["failed"]`. The card is recorded and **filed nowhere** —
+which is the exact failure `lane_merge.py:878-891` already documents for item
+2107 ("a card that had been written, written correctly, and filed nowhere").
+1043 is that same failure a second time, in a different disguise: not a missing
+block, a refused one.
+
+**The fix is therefore one rephrased sentence**, in the card below, not code.
+
+## 9. What this lane changed
+
+One file: this report. Its card (below) keeps the prior lane's question, context,
+recommendation and option B verbatim, and rewrites **only option A** so the
+financial default is a no-op the gate accepts. No code, no schema, no test
+changed; no client-facing number touched.
+
+## 10. Deliberately not fixed
+
+- **1043's code half (both halves).** No implementation site exists in this repo
+  (§2 of the report above, re-verified). Adding `price` to
+  `canonical_field_status` would destabilise every tier hash across days and is a
+  MAJOR version bump (`python/src/static_validator/canonicalize.py`).
+- **The ETF-implied fallback itself.** Its producer is the `etf-scraper`
+  pipeline, gated behind a laptop cron that `docs/coordination.md` records as
+  needing migration. That is a different package and a prerequisite, and it is
+  handed off below rather than left implicit.
+- **Adding a `price_assumed_par` flag.** The trap documented above in §3; a
+  design constraint for whoever builds it, not a change this lane makes.
+
+## Tests
+
+No code changed, so nothing to run: `git status --porcelain` shows only this
+report. For the record the prior lane ran the full suite green at 285 passed,
+and this lane's change cannot affect it — the only file touched is a markdown
+report under `.cmux/reports/`.
+
+## Needs a human
+
+Item 1043 is a **DECISION**, not a defect, and it needs Andy for one reason no
+lane can supply: whether a real client upload lacking prices has been seen is a
+market observation held in the client files, not in any checkout here. The card
+below is the fourth attempt to get that question in front of him; the first
+three were written and never reached him.
+
 <!-- lane-result
 FIXED: none
 ALREADY_FIXED: none
@@ -166,9 +260,15 @@ DECISION: 1043
 item: 1043
 question: Should the validator build an ETF-implied price fallback (EMB/JPGB weight-to-price) for client uploads that lack prices, or does 1043 stay parked until a real such upload arrives?
 context: The item is a parked feature gated on the event "once we see a real client upload that lacks prices", which no code lane can observe, and every upload seen so far (State Street EWN, 2026-05-12) included prices.
-option A: Keep 1043 parked — the standing v1 behaviour (assume par, flagged visibly) is the answer until a real incompletely-priced client upload is produced, and the item is re-opened only then.
+option A: Do nothing and leave 1043 parked as-is - no code changes and no new pipeline; the standing v1 behaviour (assume par, flagged visibly) stays unchanged and the item is re-opened only if a real incompletely-priced client upload is produced.
 option B: Commission the fallback now as a scoped job in the portfolio-upload / ETF-scraper path (EMB/JPGB daily holdings + NAV to a synthetic price, marked as assumed wherever it is shown), starting with the migration of the ETF-scraper laptop cron to a cloud trigger.
 recommend: A
 reason: The item says it is not blocking and every upload seen so far has prices, so building it now spends the ETF-holdings pipeline (currently a laptop cron) on a case that has not occurred.
 default: A
+-->
+
+<!-- lane-handoffs
+item: 1043
+repo: mcp_central
+change: If Andy answers B, the ETF-implied price fallback belongs here, not in static-validator: it needs the etf-scraper path extended to read EMB/JPGB daily holdings + NAV and emit a synthetic per-bond price marked as assumed (source_reference kind "etf_holding"). Prerequisite: migrate the ETF-scraper laptop cron to a cloud trigger, which docs/coordination.md already records as required.
 -->
