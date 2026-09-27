@@ -17,6 +17,7 @@ Three deployment tiers share the same codebase, differing only in how much trust
 | **0 — Air-gapped** | Your infrastructure | Nothing — even reference data is a daily signed offline snapshot | Banks, sovereigns, paranoid quant desks |
 | **1 — Self-hosted with read API** | Your infrastructure | ISINs only, via outbound `GET /bond/{isin}` calls | Security-conscious mid-market |
 | **2 — Hosted convenience** | Our infrastructure at `validator.x-trillion.com` | The portfolio you upload, under explicit terms of service | Users who want zero operational overhead |
+| **0 / 1 — write path not shipped** | — | Not built yet — no code in this repo writes the Tier 2 upload tables | — |
 
 In every tier the diagnostic answer is the same. Tier 0 trades convenience for cryptographic guarantees. Tier 2 trades guarantees for convenience.
 
@@ -93,7 +94,7 @@ The schema applies to **every fixed-rate bond**, not only vanilla bullets. Struc
 - **v0.3** — Public read API (Cloudflare Worker), seeded with the first ~9k cross-referenced bonds; subscription gates enriched fields
 - **v0.4** — JavaScript SDK; cross-language byte-identical canonical-JSON CI harness
 - **v0.5** — Self-hosted container (Docker image on GHCR; one-click Railway template) for Tier 1 deployment
-- **v0.6** — Tier 2 hosted at `validator.x-trillion.com`; portfolio history; shareable URLs. Tier 2 stores what you upload, so server-side identity for every upload and database access rules over what it stores are **preconditions of accepting any client data at all** — not v0.6 features. Measured 2026-09-27: the two upload tables currently accept anonymous `INSERT` and `UPDATE`, and the `client_id` on them is free text the caller chooses. See `.cmux/decisions/1053-tier2-upload-isolation.md`.
+- **v0.6** — Tier 2 hosted at `validator.x-trillion.com`; portfolio history; shareable URLs. Tier 2 stores what you upload, so server-side identity for every upload and database access rules over what it stores are **preconditions of accepting any client data at all** — not v0.6 features. Measured 2026-09-27: the two upload tables accept anonymous `INSERT` and `UPDATE`, and the `client_id` on them is free text the caller chooses. **The upload write path is not built** — nothing in this repo reads or writes either table, so the exposure is a property of the database, not of shipped code. When that path is built it must not hold the publishable key: the read goes out through the bond-data service as one client's uploads (`POST /tools/client_portfolio_uploads`), the write through the same service under its service key, and the publishable key stays on the server. Applying bond-data's `migrations/006_PREPARED_portfolio_upload_rls.sql` steps 1+2 *before* that path exists makes no wedge read nothing. See `.cmux/decisions/1053-tier2-upload-isolation.md`.
 - **v1.0** — Ed25519-signed attestations, daily signed offline snapshots for Tier 0, Helm chart, Terraform module
 
 The schema (SCHEMA.md) is stable enough to design against; expect minor revisions before v1.0.
