@@ -1,7 +1,9 @@
 # static-validator / `theme:pricing` — package report
 
-**Lane:** `proposal/static-validator-theme-pricing-09291002`  
+**Lane:** `proposal/static-validator-theme-pricing-10011056`
 **Slice:** item 1043 (the only open item in this package).
+
+This lane re-verified the existing disposition and retained the previously filed decision card; it did not create a duplicate card or code change.
 
 ## Grouping and disposition
 
@@ -11,10 +13,12 @@ price from ETF holdings and NAV. These are not defects in `static-validator`.
 The supplied disposition records the recommendation to keep the feature parked
 until a real client upload without prices appears.
 
-The repository is the static validation SDK/schema. Price is excluded from the
-canonical validated fields, and adding a moving market value there would change
-the static validation/hash contract. The upload parser and diagnostic renderer
-described by the item are not in this repository. The ETF pipeline is separately
+The repository is the static validation SDK/schema. The current
+`schema/published_record.schema.json` admits only coupon, day count, frequency,
+dates, calendar, and business-day convention in `canonical_field_status`, with
+`additionalProperties: false`; price is excluded. Adding a moving market value
+there would change the static validation/hash contract. The upload parser and
+diagnostic renderer described by the item are not in this repository. The ETF pipeline is separately
 owned and its recorded laptop-cron migration remains a prerequisite. No code or
 client-facing financial number is changed here.
 
@@ -29,6 +33,10 @@ client-facing financial number is changed here.
 No items were fixed or already fixed. No handoff is filed while the feature is
 parked: the downstream build is conditional on the human decision, and queuing
 it now would dispatch work before the trigger/commissioning question is settled.
+The existing decision record at
+`.cmux/decisions/1043-price-provenance-not-a-validated-field.md` also records
+that the consumer and renderer are absent here. If commissioned, the work must
+be routed to the owning portfolio/ETF pipeline.
 
 ## Tests
 
