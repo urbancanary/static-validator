@@ -1,9 +1,9 @@
 # static-validator / `theme:auth` — package report
 
-**Lane:** `proposal/static-validator-theme-auth-10011058`  
+**Lane:** `proposal/static-validator-theme-auth-10011132`  
 **Slice:** item 1053 (the only open item supplied).  
 **Code change:** none; the owning schema and database are in `bond_data_mcp`.  
-**Tests:** none; documentation-only report update, with no executable files changed.
+**Tests:** none; documentation-only handoff, with no executable files changed.
 
 ## Underlying defects
 
@@ -12,7 +12,7 @@ The reported symptoms have two causes, both outside this repository:
 1. `portfolio_uploads` and `portfolio_upload_evidence` permit anon access. The recorded live probe showed anonymous inserts and updates, so RLS/grant hardening belongs with the database owner.
 2. `client_id` is free text and needs a stable FK target. The supplied disposition recommends a new `clients` table rather than mutable email, but that table and the wider Bucket D entitlement model are not defined here. Per-client RLS policies depend on that estate-level identity design.
 
-This repo contains no code that reads or writes these tables. Its existing decision record, [.cmux/decisions/1053-tier2-upload-isolation.md](../../decisions/1053-tier2-upload-isolation.md), documents the live evidence and recommends enabling RLS without policies and revoking anon/authenticated writes before any client data is accepted. The existing package report and `handoff-1053` report already carry a handoff and Andy decision card; this report repeats the machine-readable handoff for the current proposal but does not create a second decision card.
+This repo contains no code that reads or writes these tables. Its existing decision record, [.cmux/decisions/1053-tier2-upload-isolation.md](../../decisions/1053-tier2-upload-isolation.md), documents the live evidence and recommends enabling RLS without policies and revoking anon/authenticated writes before any client data is accepted. The existing `handoff-1053` report already carries an Andy decision card; this report repeats the machine-readable handoff for the current proposal but does not create a second decision card.
 
 ## Item disposition
 
