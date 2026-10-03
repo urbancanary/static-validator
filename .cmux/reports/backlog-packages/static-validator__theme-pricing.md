@@ -1,9 +1,9 @@
 # static-validator / `theme:pricing` — package report
 
-**Lane:** `proposal/static-validator-theme-pricing-10011056`
+**Lane:** `proposal/static-validator-theme-pricing-10030654`
 **Slice:** item 1043 (the only open item in this package).
 
-This lane re-verified the existing disposition and retained the previously filed decision card; it did not create a duplicate card or code change.
+This lane confirmed `python/src/static_validator/wire.py:60` still lists `etf_holding` as a source-reference kind. That line describes provenance metadata; it does not add a price field or an ETF fallback. The item remains gated on a real incomplete-price client upload, so this lane makes no code change and repeats the decision card because the item remains open.
 
 ## Grouping and disposition
 
