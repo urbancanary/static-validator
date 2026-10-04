@@ -150,7 +150,10 @@ are beside the code that owns the schema (`bond_data_mcp/migrations/`, four
 numbered files). A `bond-data` grant change placed in this SDK is a file nobody
 with the database credentials will ever open — and on the standing rule that no
 lane applies a migration, a lane in *this* repo cannot run the one thing that
-closes the hole. The statement is handed off instead, verbatim, below.
+closes the hole. The statement is written out in full in §3 above, which is
+where it lives; there is no separate SQL file to point at, and the
+`006_PREPARED_portfolio_upload_rls.sql` that later reports cite is not on this
+host (see §8).
 
 ## 5. The one thing this lane changed, and what it deliberately did not
 
@@ -203,3 +206,35 @@ touched.
   cannot fix it either. It is named here so the next lane does not mistake
   1053 for the whole exposure. 1053 is two rows of it; the fix in §3 is the
   same one-line shape and could be applied to all of Bucket D at once.
+
+## 8. Provenance correction, 2026-10-04 — `migrations/006` does not exist
+
+§4 used to say the statement was "handed off instead, verbatim, below". There
+was nothing below. Later lanes and reports filled that gap with a file name —
+`bond_data_mcp/migrations/006_PREPARED_portfolio_upload_rls.sql` — and the
+name is now cited in two package reports, in the README's v0.6 line and in the
+question on the decision card. **No lane has written that file, in this repo
+or any other on this host.** Traced over every branch of this checkout: the
+name appears first in commit `a778013` (2026-09-27), whose own commit body
+says there is no SQL file anywhere; the first `lane-handoffs` block naming it
+is `64c524e`; `find . -name '*.sql'` returns nothing and there has never been
+a `migrations/` directory here.
+
+Two consequences, and the second is the one that mattered:
+
+1. The question on the card ("will they apply `006_PREPARED_…` steps 1+2?")
+   references an artefact the person answering it cannot open. The statement
+   itself is §3 above, which is why §3 is written as SQL rather than described.
+2. The README's v0.6 line said applying the grant change before the write path
+   exists "makes no wedge read nothing" — which reads as *do not apply it yet*.
+   The conditional does not hold: a path that does not exist cannot be broken
+   by RLS. Leaving the sentence as written was advice to keep anonymous
+   `INSERT`/`UPDATE`/`DELETE` on both upload tables, and to keep the
+   publishable key reading `transactions` (1,346), `current_holdings` (112) and
+   `cashflows` (2,566), on the strength of a file that is not there.
+
+Corrected in `README.md` and `SCHEMA.md` in the same commit as this section.
+The reading in §3 is unchanged and still governs: **grant change first, FK
+second, policies in the estate's Bucket D programme** — and none of it is
+blocked by the identifier question, by the absence of the write path, or by
+the absence of this file.

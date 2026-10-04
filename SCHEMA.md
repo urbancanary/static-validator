@@ -165,6 +165,7 @@ The following are NOT inputs to v0.1 tier hashes. Some are surfaced as metadata 
 - **Ratings** (Moody's, S&P, Fitch, composite) — future `rating_hash`.
 - **Floating-rate references** (index, spread, cap, floor) — until a future `floater_hash`, floaters' `coupon` field carries the current fixing only and the `is_floater` flag warns the consumer.
 - **Pricing or analytics** (yield, duration, OAS, spread) — these are computations, not static.
+- **Client identity** — who a client is, and which records are theirs, is a property of the hosted service's session, not of this protocol. `validate_request.schema.json` sets `additionalProperties: false` for exactly this reason: the protocol will not carry a client identifier. A service built on it must resolve the caller server-side and store uploads against that resolved identity. See the v0.6 roadmap line in `README.md`.
 
 ## 9. Open questions for v0.2
 
