@@ -67,7 +67,7 @@ The protective property is **where the data flows**, not who wrote the code.
 
 ### Tier 2 — hosted convenience
 
-- You upload the portfolio file to `validator.x-trillion.com`. We process it on our infrastructure.
+- **Not built yet.** You will upload the portfolio file to `validator.x-trillion.com`; we will process it on our infrastructure. No code in this repo reads or writes the upload tables — see the v0.6 line below, which records what that path must do before it stores anything.
 - We see your data. Terms of service make that explicit. We retain it for history and shareable URLs; you can delete it.
 - This is the convenience option, not the security option. If you have a data-residency or compliance reason to avoid sending portfolio data to a vendor, use Tier 1 instead.
 
