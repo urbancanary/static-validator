@@ -1,141 +1,190 @@
 # static-validator / `theme:auth` — package report
 
-**Lane:** `proposal/static-validator-theme-auth-10041104`
+**Lane:** `lane/auto-static-validator-theme-auth-10042212`
 **Slice:** item 1053 (the only open item in the package).
-**Commit:** one, `b3918c1` — `README.md` Tier 2 bullet. **Tests:** 285 passed
+**Commits:** two — `79271a9` (`README.md`, `SCHEMA.md`), `fb56e62`
+(`.cmux/decisions/1053-tier2-upload-isolation.md` §8). **Tests:** 285 passed
 (`python/`), 8 passed (`mcp/`).
+
+**Result: item 1053 is closed as a `DECISION`, and this lane can now put the
+actual statement in front of Andy.** The card filed by the lane before this one
+asked him to approve applying
+`bond_data_mcp/migrations/006_PREPARED_portfolio_upload_rls.sql` — **a file that
+does not exist on this host.** Ten lanes have read that file name; none has
+opened it, because there is nothing to open. That is the defect this lane fixes,
+and it is the reason the queue has been holding a question about an artefact
+rather than about a grant change.
 
 ---
 
-## 1. Reading the item, and what four prior lanes already established
+## 1. What changed, and why a seventh read of the item was not enough
 
-Item 1053 asks for two things against `portfolio_uploads` /
-`portfolio_upload_evidence` in bond-data Supabase: (1) migrate `client_id`
-from free text to a proper FK, (2) add RLS policies so the anon key cannot
-read another client's uploads.
+The item is two sentences about `portfolio_uploads` / `portfolio_upload_evidence`
+in bond-data: tighten `client_id` to a FK, add RLS so the anon key cannot read
+another client's uploads. Six lanes have now been sent at it. Their findings all
+hold and I re-verified them in the tree rather than inheriting them:
 
-Four lanes have now been sent at this item. Their findings, which I re-checked
-against the tree rather than inherited, all hold:
+- No Supabase URL, no key read, no `portfolio_uploads` reference, no HTTP or DB
+  client in `python/src` or `mcp/src`. `find . -name '*.sql'` returns nothing;
+  there has never been a `migrations/` directory here. Tier 2 is two README
+  lines and a decision record.
+- The exposure is live and was measured, not inferred
+  (`.cmux/decisions/1053-tier2-upload-isolation.md` §2, 2026-09-27): with the
+  publishable key, `POST /portfolio_uploads` returned `201` and `PATCH` `204`,
+  and the same key read `transactions` (1,346), `current_holdings` (112) and
+  `cashflows` (2,566). I did **not** re-probe; re-running a write against a
+  table with no write control would add risk to a measurement three lanes have
+  already reproduced.
 
-- **`.cmux/decisions/1053-tier2-upload-isolation.md`** (theme:auth,
-  2026-09-27) fetched the key the sanctioned way and measured the live
-  database: anon `GET` reads fine, `POST` returned `201` with a `client_id`
-  the prober chose, `PATCH` returned `204`. `client_entitlements` 404s
-  (`PGRST205`). Its conclusion — the exposure is a property of the database,
-  and migration order is forced (grant first, FK second) — is the correct
-  framing and I did not dispute it.
-- **`static-validator__handoff-1053.md`** measured the repo: no Supabase URL,
-  no key read, no `portfolio_uploads` reference, no HTTP or DB client anywhere
-  in `python/src` or `mcp/src`. Tier 2 is a README row and a decision record.
-  I re-verified this and it is still true — so nothing in this repo can move
-  `client_id` or write an RLS policy.
-- **`static-validator__theme-auth-10011132`** changed nothing and repeated a
-  `bond_data_mcp` handoff.
-- **`static-validator__theme-pricing`** fixed 1043 by *filing a decision
-  card*. That is the precedent this lane follows for 1053 (§5), and it is why
-  the card below is written rather than a fifth "handoff" block.
+So the sixth "read the item again and report" would have produced nothing, and
+reporting `DECISION: none` a fourth time is what kept 1053 on the board. What
+this lane did instead was trace **the only artefact anyone has ever cited as
+progress on it**:
+
+| Commit / file | Says |
+|---|---|
+| `a778013` (2026-09-27) | "no SQL file anywhere", and in the same body: "Applying bond-data's `migrations/006_PREPARED_portfolio_upload_rls.sql` steps 1+2 *before* that path exists makes no wedge read nothing" |
+| `64c524e` | first `lane-handoffs` block carrying the name `006_PREPARED…`, tagged `repo: bond_data_mcp` |
+| `b181706` / `b3918c1` | two package reports state the file "is prepared and committed", "is written and committed on `proposal/portfolio-upload-rls-1053`" |
+| the card delivered to Andy | "will they apply `migrations/006_PREPARED_portfolio_upload_rls.sql` steps 1+2?" |
+
+`git log -S 006_PREPARED` over every branch in this checkout: the string appears
+nowhere before `a778013`, and never in a `.sql` file. The two reports that say
+it is "committed on a branch" do not name where; the migration's own repository
+was never named either — the handoff says `bond_data_mcp` and the reports say
+`bond-data`, which are different projects in this estate. **The provenance of
+the file cannot be checked from here, and the credential holder Andy would have
+to ask has never been told what to run.**
 
 ## 2. Grouping the symptoms into underlying defects
 
-One item, four defects, sorted by who can close them. This is the same sort
-`handoff-1053.md` made, and I reached the same four — with B1's scope
-corrected upward:
+Same four defects as the previous two lanes, with the state of each corrected:
 
-| # | The defect | Who can close it | State after this lane |
+| # | The defect | Who closes it | State after this lane |
 |---|---|---|---|
-| **B1** | Anon holds `INSERT`/`UPDATE`/`DELETE` on both upload tables, **and** on the wider bond-data surface — the same probe read `transactions` (1,295 / now 1,346 rows), `current_holdings` (112) and `cashflows` (2,566) with the publishable key | **bond-data + the holder of the service-role key** | Unchanged. Two of those tables are 1053; the rest is the estate Bucket D programme. No lane in this repo can apply a grant change. |
-| **B2** | `client_id` is free text, so any writer asserts their own identity | **Andy + bond-data** | Unchanged. The identifier choice is real and undecided. |
-| **B3** | RLS policies with `client_entitlements` scoping | **estate Bucket D programme** | Blocked on B2. The table the audit's policy shape reads from does not exist on bond-data. |
-| **B4** | **Nothing in the product tells a reader that the Tier 2 upload path is unbuilt.** The roadmap line says so; the tier description contradicted it in present tense | **this repo** | **This commit.** |
+| **B1** | Anon holds `INSERT`/`UPDATE`/`DELETE` on both upload tables, and the publishable key reads the wider bond-data surface | **bond-data + the named service-role holder** | Unchanged — and now the only thing standing between it and being run is a name. §3 below is the statement, in full, in the card. |
+| **B2** | `client_id` is free text, so any writer asserts their own identity | **Andy + bond-data** | Unchanged. Still the correct second step, still after B1: an FK over an anon-writable column constrains nothing. |
+| **B3** | RLS policies scoped through `client_entitlements` | **estate Bucket D programme** | Unchanged, blocked on B2. `client_entitlements` 404s on bond-data. |
+| **B4** | **The estate's written record points at a migration file that does not exist, and the README used it to advise delaying the one change nobody disputes** | **this repo** | **These commits.** |
 
-B4 is the only one this repo owns, and it is not cosmetic. The `README.md`
-Tier 2 bullets read:
-
-> - You upload the portfolio file to `validator.x-trillion.com`. We process it
->   on our infrastructure.
-
-while no code in this repo reads or writes either upload table. A reader —
-including the next lane, and including whoever schedules the bond-data
-migration — concludes the path is shipped, and the §1 ordering constraint
-(grant change *before* the first row is written, FK *after*) then looks
-already satisfied. `handoff-1053.md` §4 said exactly this about a previous
-sentence ("the tier ships behind an isolation boundary"), and the tier
-description was left behind when that one was corrected. This commit closes
-the remaining half of that same fix, at the same producer.
+**B4 is the one this repo owns, and it is not cosmetic.** The README's v0.6
+line ended with *"Applying bond-data's `migrations/006_PREPARED_…` steps 1+2
+**before that path exists** makes no wedge read nothing."* Read as advice —
+which is how a conditional attached to a file name gets read — it says: do not
+apply the grant change yet, there is a wedge to break. There is no wedge. A path
+that does not exist cannot be broken by RLS, and enable-RLS-with-no-policies is
+a no-op for every reader that exists today (there are none) and a hard stop for
+every reader that should not. The sentence was, in effect, a reason to leave
+anonymous `INSERT`/`UPDATE`/`DELETE` open on both tables and the publishable key
+reading 1,346 transactions, on the strength of a file that is not there.
 
 ## 3. What I changed
 
-`README.md`, Tier 2 bullet 1 — present tense to not-built, pointing at the
-v0.6 line that already carries the measured state and the ordering
-constraint. Documentation only: no code, no schema, no migration, no wire
-contract, no client-facing financial number (no price, yield, spread,
-duration, NAV, cash or P&L is touched), and no settled trade re-derived.
+1. **`README.md`**, v0.6 line — the phantom `006_PREPARED…` sentence is gone.
+   It now states the grant change explicitly (enable RLS on both tables with no
+   policies; revoke `INSERT`/`UPDATE`/`DELETE` from `anon`, `authenticated`),
+   says it **is not blocked** by the missing write path or the identifier
+   question and should not wait for either, points at §3 of the decision record
+   where the statement is written out, names the one thing it needs (the
+   bond-data service-role key, which no lane holds), and records that no
+   `migrations/006` file exists. The surrounding sentences were kept to the
+   narrowest true claim: "no code reads or writes either table" rather than "no
+   code in this repo".
+2. **`SCHEMA.md` §8** — one bullet: **client identity is out of scope for the
+   protocol**. `validate_request.schema.json` sets `additionalProperties: false`
+   for exactly this reason, so this is where the server-side-identity rule stops
+   being a preference and becomes a consequence of the wire contract.
+3. **`.cmux/decisions/1053-tier2-upload-isolation.md` §8** — the provenance
+   trace above, so the next lane does not re-derive it or cite the file again,
+   and a correction of §4, which said the statement was "handed off instead,
+   verbatim, below" when nothing was below. §3 (the SQL) is unchanged and still
+   governs.
+
+Documentation only. No code, no SQL file committed, no migration applied or
+prepared, no endpoint, no client-facing financial number (no price, yield,
+spread, duration, NAV, cash or P&L touched), no settled trade re-derived.
 
 ## 4. Deliberately not changed
 
-- **No SQL file here.** The grant change is prepared in bond-data's
-  `migrations/006_PREPARED_portfolio_upload_rls.sql` and the standing rule is
-  that no lane applies a migration. A second copy in this SDK is a second
-  thing to drift, and a file nobody with the credentials opens
-  (`.cmux/decisions/1053-tier2-upload-isolation.md` §4).
-- **No `clients` table definition.** Writing one down *answers* the estate's
-  Bucket D identifier question by accident, for a project that does not own
-  it.
-- **No client, endpoint or helper for the upload path.** There is no caller
-  yet; dead security code reads as a control that exists.
-- **No `Data_Access.md`-style policy document.** The rule belongs where the
-  path will be built, which is the v0.6 line, and it is already there.
-- **No test.** No executable file changed. A test asserting "this repo does
-  not hold the publishable key" would pass today and tomorrow and catch
+- **No `.sql` file in this repo.** Writing `006_PREPARED_…` here would create
+  the very artefact whose absence caused this item — a second copy, in a repo
+  with no migration runner, that no credential holder would open. The statement
+  lives in §3 of the decision record, which is a file a person reads.
+- **No `clients` table definition, no policy SQL.** Writing either down
+  *answers* the estate's Bucket D identifier question by accident, for a project
+  that does not own it, for two tables that are two rows of a 160-table audit.
+- **No client, endpoint or helper for the upload path.** There is no caller. A
+  `POST /tools/client_portfolio_uploads` client for a service nobody has
+  confirmed exists is dead code on a security path, and dead security code reads
+  as a control that exists.
+- **No test.** No executable file changed. A test asserting "this repo does not
+  hold the publishable key" passes today and passes tomorrow and catches
   nothing.
+- **No re-probe of the live database.** Three lanes have measured it; one of the
+  measurements was a write to a table with no write control.
 
 ## 5. Item ids
 
 | id | status | one line |
 |---|---|---|
-| 1053 | **still open, and now filed as a decision** | Half of it (B1) is a credential nobody has named; the other half (B2) is the identifier choice. Neither is a code defect in this repo — five lanes have now confirmed that. The card below is the mechanism that closes it. |
+| 1053 | **DECISION — the card is filed below and is now answerable** | Neither half has a fix in this repo (§1) and no lane in this repo can apply one: B1 needs a credential nobody has named, B2 is the estate-wide identifier choice. There is no code defect left to find here; there is one grant change waiting on one person. |
 
 `FIXED: none`, `ALREADY_FIXED: none`. Listing 1053 as FIXED would shrink the
-package while `POST /portfolio_uploads` still returns `201` and `client_id`
-is still free text. A README sentence does not close a security item.
+package while `POST /portfolio_uploads` still returns `201` and `client_id` is
+still free text. A README sentence does not close a security item — but a card
+that names the statement instead of a missing file is what lets Andy close it.
 
-**No `lane-handoffs` block this time, and that is deliberate.** The theme:auth
-lane at `10011132` re-issued the `bond_data_mcp` handoff, but the bond-data
-lane had already landed `migrations/006_PREPARED_portfolio_upload_rls.sql` and
-`POST /tools/client_portfolio_uploads` on `proposal/portfolio-upload-rls-1053`.
-Re-issuing it dispatches a second lane at work that is already on a branch —
-the exact re-dispatch that cost a whole lane in `static-validator__handoff-332.md`.
-Nothing in bond-data needs a lane; it needs a credential.
+**No `lane-handoffs` block, and that is deliberate.** Two prior lanes re-issued
+a `bond_data_mcp` handoff for this work; the work is eight lines of SQL in the
+decision record, it is already written, and what it lacks is a credential, not a
+lane. Re-issuing it would dispatch a third lane at the same eight lines — the
+re-dispatch that cost a whole lane in `static-validator__handoff-332.md`.
+
+**Decision cards.** The prior lane's card on 1053 was written against the
+missing file, so it is superseded below rather than duplicated: a card is filed
+under `covers: 1053` naming the statement and the credential question. **I did
+not re-file the identifier question** — `DISPOSITION 20260921-13` already
+records it (new `clients` table over the xt-auth email, because a policy keyed
+on an email that can change is not a stable id) and it is the estate's Bucket D
+question, dated 2026-05-20, governing 160 tables. Carding it here would split
+one question across two queue entries, which is what the queue's group-by-
+decision rule exists to prevent.
 
 ## 6. Tests run
 
 ```
-cd python && PYTHONPATH=src python3 -m pytest tests -q     ->  285 passed
-cd mcp && PYTHONPATH=src:../python/src python3 -m pytest tests -q  ->  8 passed
+cd python && PYTHONPATH=src python3 -m pytest tests -q                  ->  285 passed
+cd mcp    && PYTHONPATH=src:../python/src python3 -m pytest tests -q    ->  8 passed
 ```
 
-Run because the change is in `README.md` only and the package claims a
-passing tree; nothing executable was touched. The `mcp/` suite needs
-`python/src` on `PYTHONPATH` in this environment (`ModuleNotFoundError:
-static_validator` otherwise) — worth knowing for the next lane, not a defect.
+Run because the package claims a passing tree and the next lane should inherit a
+green one; nothing executable was touched. The `mcp/` suite needs `python/src`
+on `PYTHONPATH` in this environment (`ModuleNotFoundError: static_validator`
+otherwise) — a known environment quirk, not a defect. I did not run any suite
+outside this package.
 
 ## 7. What needs a human
 
-The reporting problem, and it is the fifth time it has been worth saying:
-**five lanes have been sent at 1053 and none of them changed any code in the
-product**, because the fix is not in this repo and cannot be. Item 1053 is
-filed against `static-validator`; its fix lives in bond-data's database, and
-the thing standing between it and the fix is a **named holder of the
-service-role key**. Until someone is named, the sixth lane will reach the same
-conclusions.
+**Seven lanes have now been sent at 1053 and none has changed a line of
+product code**, because the fix is eight lines of SQL against a database this
+repo does not own, and the thing standing between the estate and those eight
+lines is a **name**: who holds the bond-data service-role key. The card below is
+the seventh attempt to get that name, and it is a better one than the sixth,
+because it no longer asks Andy to approve something he cannot look at.
 
-A second thing, which is a reading correction rather than a decision: the
-item's disposition recommends a new `clients` table over the xt-auth email
-as the FK target. I agree with the recommendation and it changes nothing
-about ordering — **the grant change is still first**. Tightening `client_id`
-to a FK while `anon` holds `INSERT` buys nothing, because a caller who can
-insert any row can insert any `client_id` the FK permits. Whoever applies
-`006` should apply steps 1+2 and not wait for the identifier to be settled.
+Two smaller things worth naming, both reporting problems rather than decisions:
+
+- **The `bond_data_mcp` / `bond-data` ambiguity in the handoff blocks.** The
+  migration is cited under one project name and claimed to live in the other,
+  and neither has been checked. If a `bond_data_mcp` lane does hold a written
+  `006`, then the file exists there and the note in `README.md` and §8 of the
+  decision record is wrong for that repo — the statement is the same either way,
+  which is why both now point at the SQL rather than at a path.
+- **How the file name entered the record.** Commit `a778013` warned in the same
+  breath that there was no SQL file, and three later documents cited the file
+  without opening it. That is the mechanism worth watching: a name repeated in a
+  report reads as a landed artefact to the next lane, and it took a lane whose
+  only job was to check to find that it was not one.
 
 ---
 
@@ -147,11 +196,12 @@ DECISION: 1053
 
 <!-- lane-decisions
 item: 1053
-question: Who is the named holder of the bond-data service-role key, and will they apply bond-data migrations/006_PREPARED_portfolio_upload_rls.sql steps 1+2 (ENABLE ROW LEVEL SECURITY on portfolio_uploads and portfolio_upload_evidence, REVOKE INSERT/UPDATE/DELETE FROM anon, authenticated) to https://xdgicslrdudsqlsudsgv.supabase.co?
-context: The file is written and committed on proposal/portfolio-upload-rls-1053, and a live probe on 2026-09-27 returned 201 from an anonymous POST to portfolio_uploads, so five lanes have now been sent at item 1053 without any of them being able to run the one statement that closes it.
-option A: Name the service-role holder and apply 006 steps 1+2 now, leaving client_id as free text until the identifier is decided; the FK and client-scoped policies follow and are not blocked by this.
-option B: Apply 006 steps 1+2 only when the client_id FK target (xt-auth email vs a new clients table) is settled, so identity and isolation land in one migration.
+covers: 1053
+question: Will you name the holder of the bond-data service-role key and have them run this statement against https://xdgicslrdudsqlsudsgv.supabase.co: ALTER TABLE public.portfolio_uploads ENABLE ROW LEVEL SECURITY; ALTER TABLE public.portfolio_upload_evidence ENABLE ROW LEVEL SECURITY; REVOKE INSERT, UPDATE, DELETE ON public.portfolio_uploads, public.portfolio_upload_evidence FROM anon, authenticated;
+context: The statement is eight lines, it is written out in full in section 3 of .cmux/decisions/1053-tier2-upload-isolation.md, and a live probe on 2026-09-27 returned 201 from an anonymous POST to portfolio_uploads while the same publishable key read 1,346 transactions, 112 holdings and 2,566 cashflows - so seven lanes have been sent at item 1053 without any of them being able to run it, and the card previously filed against this item asked you to approve a migration file that does not exist on this host.
+option A: Name the service-role holder now and have them run the statement as written, leaving client_id as free text and per-client RLS policies to the estate Bucket D programme; the statement is a no-op for every reader that exists today because both upload tables are at zero rows.
+option B: Leave the grant change until the client_id FK target (xt-auth email vs a new clients table) is settled, so identity and isolation land in one migration, and accept that anonymous INSERT/UPDATE/DELETE and public reads of transactions, current_holdings and cashflows stay open meanwhile.
 recommend: A
-reason: Enable-RLS-with-no-policies is a no-op for every reader that exists today and a hard stop for every reader that should not, while the FK choice buys nothing until the anonymous write is closed.
+reason: Turning RLS on with no policies closes the anonymous write and the public read in the same eight lines, while the FK choice buys nothing until the anonymous write is closed and it governs 160 tables in an audit dated 2026-05-20.
 default: A
 -->
