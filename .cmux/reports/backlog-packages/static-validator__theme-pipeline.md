@@ -227,6 +227,20 @@ card, and `covers:` names 5669 so the two are settled together:
 If the answer is "it is this repo", the pipeline must be **specified** before it is coded: the
 package, the module layout, the `bond_cashflow_schedule` structure, and where per-period notionals
 come from. That specification is a decision, not a fix.
+# static-validator — theme:pipeline
+
+**Item:** 5670 — validate-portfolio live full-sample run and edge cases
+**Verdict:** DECISION. The requested `validate_portfolio/classifier.py` and
+`state_street_ewn_20260430.tsv` are absent from this checkout. `rg --files` finds
+neither; searches for `GREENSAIF`, `first_coupon_end`, and country alias/classifier
+symbols find no relevant implementation. The existing Python package is
+`python/src/static_validator/`, a different tool. There is no honest code fix or
+run result available here.
+
+No code tests were run because no implementation file is present to change.
+Nothing was fixed. Andy needs to identify the repository that owns
+`validate_portfolio` and provide/locate the sample and existing classifier before
+a live run can be performed.
 
 <!-- lane-result
 FIXED: none
@@ -265,4 +279,17 @@ default: A
 item: 5669
 repo: athena_html_v3
 change: If the validate-portfolio v0.2 pipeline (QuantLib analytics, amortizing-bond accrued) is in fact served from athena_html_v3 rather than static-validator, this item's fix belongs there, in whatever module builds the QuantLib bond object for a cashflow schedule — but no such module or route was verifiable from this clone, so confirm ownership before sending a lane.
+-->
+DECISION: 5670
+-->
+
+<!-- lane-decisions
+item: 5670
+question: Which repository owns validate_portfolio and its State Street sample?
+context: This checkout has no validate_portfolio classifier or named TSV, so the requested live run cannot be performed here.
+option A: Identify the repository containing the existing pipeline and sample, then route the item there.
+option B: Treat validate_portfolio as a new project and provide its design and source data before implementation.
+recommend: A
+reason: The item describes an existing pipeline, so locating that artifact is the smallest step that enables its requested run.
+default: A
 -->
